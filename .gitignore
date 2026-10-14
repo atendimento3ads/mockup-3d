@@ -1,0 +1,6 @@
+node_modules
+dist
+saidas/
+.claude/
+exemplos/*.png
+.DS_Store
