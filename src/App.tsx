@@ -26,6 +26,7 @@ import {
   type SceneState,
   type ToneMode,
 } from './state';
+import { addScene, patchScene, removeScene, resizeScene, sceneLength, setSceneKeys } from './scenes';
 import { Card, ColorRow, Dropdown, Field, Note, Section, Seg, SelectRow, TextRow, ToggleRow } from './ui/controls';
 import { Timeline } from './ui/Timeline';
 import { FocusAreas, type Area } from './ui/FocusAreas';
@@ -80,6 +81,10 @@ function readTheme(): 'light' | 'dark' {
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+const signedPct = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%`;
+
+const describe = (img: ScreenImage | null, name: string | null): MediaInfo | null =>
+  img ? { name: name ?? 'mídia', kind: img.video ? 'video' : 'image', w: img.w, h: img.h, duration: img.video?.duration } : null;
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -139,6 +144,7 @@ export default function App() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [areasPreview, setAreasPreview] = useState<{ url: string; aspect: number } | null>(null);
   const [video, setVideo] = useState<{ progress: number; abort: AbortController } | null>(null);
+  const [activeScene, setActiveScene] = useState<string | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -153,6 +159,39 @@ export default function App() {
   const [backdropName, setBackdropName] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const toastTimer = useRef(0);
+  // Biblioteca de mídias: as cenas guardam só o id. A mídia sem cenas também entra aqui.
+  const library = useRef(new Map<string, { img: ScreenImage; info: MediaInfo }>());
+  const mainMediaRef = useRef<string | null>(null);
+
+  const commit = useCallback((next: SceneState) => {
+    stateRef.current = next;
+    engineRef.current?.setState(next);
+    setState(next);
+  }, []);
+
+  const addMedia = useCallback((img: ScreenImage, name: string | null) => {
+    const id = crypto.randomUUID();
+    library.current.set(id, { img, info: describe(img, name)! });
+    return id;
+  }, []);
+
+  // Coloca a mídia na cena sob a agulha (ou na tela, se não houver cenas).
+  const placeMedia = useCallback(
+    (img: ScreenImage | null, name: string | null) => {
+      const s = stateRef.current;
+      const scene = s.animation.scenes.find((x) => x.id === engineRef.current?.currentScene);
+      const id = img ? addMedia(img, name) : null;
+      if (scene) {
+        commit(patchScene(s, scene.id, { media: id, screen: { ...scene.screen, scroll: 0 } }));
+        return;
+      }
+      mainMediaRef.current = id;
+      imageRef.current = img;
+      engineRef.current?.setImage(img);
+      setMedia(describe(img, name));
+    },
+    [addMedia, commit],
+  );
 
   // Tema claro (padrão) ou escuro, lembrado entre sessões.
   useEffect(() => {
@@ -165,9 +204,6 @@ export default function App() {
   }, [theme]);
   const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
 
-  const describe = (img: ScreenImage | null, name: string | null): MediaInfo | null =>
-    img ? { name: name ?? 'mídia', kind: img.video ? 'video' : 'image', w: img.w, h: img.h, duration: img.video?.duration } : null;
-
   const flash = useCallback((msg: string) => {
     setToast(msg);
     window.clearTimeout(toastTimer.current);
@@ -179,6 +215,10 @@ export default function App() {
     engineRef.current = engine;
     if (imageRef.current) engine.setImage(imageRef.current);
     if (backdropImageRef.current) engine.setBackdropImage(backdropImageRef.current);
+    engine.mediaSource = (id) => library.current.get(id)?.img ?? null;
+    engine.onScene = (id) => setActiveScene(id);
+    engine.refreshMedia();
+    setActiveScene(engine.currentScene);
     engine.onFocus = () => flash('Foco ajustado nesse ponto');
     engine.onTime = (t, playing) => timeListeners.current.forEach((fn) => fn(t, playing));
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = engine;
@@ -191,22 +231,18 @@ export default function App() {
 
   // Ponte MCP: comandos do Claude alteram o mesmo estado dos painéis.
   useEffect(() => {
-    const commit = (next: SceneState) => {
-      stateRef.current = next;
-      engineRef.current?.setState(next);
-      setState(next);
-    };
     const commands = createCommands({
       engine: () => engineRef.current,
       getState: () => stateRef.current,
       commit,
-      hasScreenImage: () => !!imageRef.current,
-      hasBackdropImage: () => !!backdropImageRef.current,
-      setScreenImage: (img, name) => {
-        imageRef.current = img;
-        engineRef.current?.setImage(img);
-        setMedia(describe(img, name));
+      hasScreenImage: () => {
+        const scene = stateRef.current.animation.scenes.find((x) => x.id === engineRef.current?.currentScene);
+        return scene ? !!scene.media : !!imageRef.current;
       },
+      hasBackdropImage: () => !!backdropImageRef.current,
+      setScreenImage: placeMedia,
+      addMedia,
+      mediaName: (id) => library.current.get(id)?.info.name ?? null,
       setBackdropImage: (img, name) => {
         backdropImageRef.current = img;
         engineRef.current?.setBackdropImage(img);
@@ -215,7 +251,7 @@ export default function App() {
       setCameraPresetUI: (key) => setPreset(key),
     });
     return connectBridge(() => commands);
-  }, []);
+  }, [commit, placeMedia, addMedia]);
 
   // Encaixa o quadro na proporção escolhida dentro da área central.
   useEffect(() => {
@@ -252,11 +288,9 @@ export default function App() {
       if (file.type.startsWith('video/')) {
         try {
           const vid = await loadVideo(URL.createObjectURL(file));
-          imageRef.current = vid;
-          engineRef.current?.setImage(vid);
-          setMedia(describe(vid, file.name));
+          placeMedia(vid, file.name);
           // Sem animação ainda: a linha do tempo passa a ter a duração do vídeo.
-          setState((s) => (s.animation.keyframes.length ? s : { ...s, animation: { ...s.animation, duration: Math.min(Math.round(vid.video!.duration * 10) / 10, 60), clips: [] } }));
+          setState((s) => (s.animation.keyframes.length || s.animation.scenes.length ? s : { ...s, animation: { ...s.animation, duration: Math.min(Math.round(vid.video!.duration * 10) / 10, 60), clips: [] } }));
           flash('Vídeo na tela: use ▶ na linha do tempo');
         } catch (err) {
           flash(err instanceof Error ? err.message : 'Não consegui abrir esse vídeo');
@@ -269,15 +303,15 @@ export default function App() {
       }
       try {
         const bmp = await createImageBitmap(file);
-        imageRef.current = { src: bmp, w: bmp.width, h: bmp.height };
-        engineRef.current?.setImage(imageRef.current);
-        setMedia(describe(imageRef.current, file.name || 'imagem colada'));
-        set('screen', { scroll: 0 });
+        const img = { src: bmp, w: bmp.width, h: bmp.height };
+        const inScene = stateRef.current.animation.scenes.length > 0;
+        placeMedia(img, file.name || 'imagem colada');
+        if (!inScene) set('screen', { scroll: 0 });
       } catch {
         flash('Não consegui abrir essa imagem');
       }
     },
-    [flash, set],
+    [flash, set, placeMedia],
   );
 
   useEffect(() => {
@@ -309,20 +343,66 @@ export default function App() {
     loadFile(e.dataTransfer.files[0]);
   };
 
-  const clearImage = () => {
-    imageRef.current = null;
-    engineRef.current?.setImage(null);
-    setMedia(null);
-  };
+  const clearImage = () => placeMedia(null, null);
 
   const choosePreset = (key: CameraPresetKey) => {
     setPreset(key);
     engineRef.current?.setCameraPreset(key);
   };
 
+  // ---------- Cenas ----------
+  const scenes = state.animation.scenes;
+  const scene = scenes.find((x) => x.id === activeScene) ?? null;
+  const sceneIndex = scene ? scenes.indexOf(scene) : -1;
+
+  // Aparelho e tela: os da cena sob a agulha, quando há cenas.
+  const setDevice = (patch: Partial<SceneState['device']>) => {
+    if (!scene) return set('device', patch);
+    const id = scene.id;
+    setState((s) => {
+      const sc = s.animation.scenes.find((x) => x.id === id);
+      if (!sc) return s;
+      const next = patchScene(s, id, { device: { ...sc.device, ...patch } });
+      // Outro aparelho: o movimento antigo não serve; a cena reenquadra e espera um preset.
+      if (patch.kind && patch.kind !== sc.device.kind && s.animation.keyframes.some((k) => k.scene === id)) {
+        flash('Aparelho trocado: escolha um preset para animar esta cena');
+        return { ...next, animation: { ...next.animation, keyframes: next.animation.keyframes.filter((k) => k.scene !== id) } };
+      }
+      return next;
+    });
+  };
+  const setScreen = (patch: Partial<SceneState['screen']>) => {
+    if (!scene) return set('screen', patch);
+    const id = scene.id;
+    setState((s) => {
+      const sc = s.animation.scenes.find((x) => x.id === id);
+      return sc ? patchScene(s, id, { screen: { ...sc.screen, ...patch } }) : s;
+    });
+  };
+
+  const sceneLabel = (sc: { device: SceneState['device'] }, i: number) => `Cena ${i + 1} · ${DEVICES.find((x) => x.kind === sc.device.kind)?.label ?? ''}`;
+
+  const newScene = () => {
+    const e = engineRef.current;
+    if (!e) return;
+    e.pause();
+    const { state: next, id } = addScene(stateRef.current, e.currentScene, mainMediaRef.current);
+    commit(next);
+    e.seek(next.animation.scenes.find((x) => x.id === id)!.t);
+    flash('Cena nova: troque o aparelho, a mídia ou o movimento');
+  };
+
+  const selectScene = (id: string) => {
+    const e = engineRef.current;
+    const sc = scenes.find((x) => x.id === id);
+    if (!e || !sc || id === activeScene) return;
+    e.pause();
+    e.seek(sc.t);
+  };
+
   const chooseDevice = (kind: DeviceKind) => {
-    if (kind === state.device.kind) return;
-    set('device', { kind, finish: FINISHES[kind][0].key, orientation: 'portrait' });
+    if (kind === (scene?.device.kind ?? state.device.kind)) return;
+    setDevice({ kind, finish: FINISHES[kind][0].key, orientation: 'portrait' });
   };
 
   const doExport = async () => {
@@ -379,14 +459,15 @@ export default function App() {
     if (!e) return;
     e.pause();
     const k = e.captureKeyframe(Math.round(t * 100) / 100);
-    const near = anim.keyframes.find((x) => Math.abs(x.t - k.t) < 0.05);
+    const near = anim.keyframes.find((x) => x.scene === k.scene && Math.abs(x.t - k.t) < 0.05);
     const keyframes = near ? anim.keyframes.map((x) => (x.id === near.id ? { ...k, id: near.id } : x)) : [...anim.keyframes, k];
     setAnim({ keyframes });
     setSelectedKey(near ? near.id : k.id);
-    // Primeiro quadro no início: leva a agulha para o fim, pronto para o próximo.
-    if (!near && anim.keyframes.length === 0 && k.t < anim.duration - 0.05) {
+    // Primeiro quadro no início (da animação ou da cena): leva a agulha para o fim, pronto para o próximo.
+    const end = k.scene ? (scenes.find((x) => x.t > k.t + 1e-6)?.t ?? anim.duration) - 0.01 : anim.duration;
+    if (!near && !anim.keyframes.some((x) => x.scene === k.scene) && k.t < end - 0.05) {
       flash('Quadro inicial salvo. Mova a câmera e adicione o quadro final.');
-      setTimeout(() => engineRef.current?.seek(anim.duration), 30);
+      setTimeout(() => engineRef.current?.seek(end), 30);
     } else {
       flash(near ? 'Quadro-chave atualizado' : 'Quadro-chave adicionado');
     }
@@ -396,7 +477,7 @@ export default function App() {
     const e = engineRef.current;
     const old = anim.keyframes.find((k) => k.id === id);
     if (!e || !old) return;
-    setAnim({ keyframes: anim.keyframes.map((k) => (k.id === id ? { ...e.captureKeyframe(old.t), id } : k)) });
+    setAnim({ keyframes: anim.keyframes.map((k) => (k.id === id ? { ...e.captureKeyframe(old.t), id, scene: old.scene } : k)) });
     flash('Quadro-chave atualizado com a câmera atual');
   };
 
@@ -413,6 +494,16 @@ export default function App() {
     const p = e.buildPreset(key);
     if (!p) return;
     setSelectedKey(null);
+    const label = ANIM_PRESETS.find((x) => x.key === key)?.label;
+    if (scene) {
+      // Numa cena: o movimento estica para a duração dela; luz e desfoque continuam os seus.
+      const keys = p.keyframes.length >= 2 ? p.keyframes : [e.captureKeyframe(0), e.captureKeyframe(p.duration)];
+      commit(setSceneKeys(stateRef.current, scene.id, keys, p.duration));
+      e.seek(scene.t);
+      e.play();
+      flash(`${label} na cena ${sceneIndex + 1}`);
+      return;
+    }
     setState((s) => ({
       ...s,
       effects: { ...s.effects, ...(p.effects ?? {}) },
@@ -424,7 +515,7 @@ export default function App() {
       en.seek(0);
       en.play();
     }, 30);
-    flash(`Preset: ${ANIM_PRESETS.find((x) => x.key === key)?.label}`);
+    flash(`Preset: ${label}`);
   };
 
   const loadBackdrop = async (file: File | undefined | null) => {
@@ -444,6 +535,13 @@ export default function App() {
     const e = engineRef.current;
     if (!e) return;
     e.pause();
+    if (scene) {
+      const len = sceneLength(state, scene.id);
+      commit(setSceneKeys(stateRef.current, scene.id, e.buildMotion(kind, len), len));
+      e.seek(scene.t);
+      e.play();
+      return;
+    }
     applyKeys(e.buildMotion(kind, anim.duration));
   };
 
@@ -474,6 +572,13 @@ export default function App() {
     }
     t = Math.round((t + travel) * 100) / 100;
     keys.push({ ...start, id: crypto.randomUUID(), t });
+    if (scene) {
+      // A cena passa a durar o percurso pelas áreas.
+      commit(setSceneKeys(resizeScene(stateRef.current, scene.id, t), scene.id, keys, t));
+      e.seek(scene.t);
+      e.play();
+      return;
+    }
     applyKeys(keys, Math.round(t * 10) / 10);
   };
 
@@ -509,7 +614,10 @@ export default function App() {
     }
   };
 
-  const d = state.device;
+  const d = scene ? scene.device : state.device;
+  const screen = scene ? scene.screen : state.screen;
+  const shown = scene ? (scene.media ? (library.current.get(scene.media)?.info ?? null) : null) : media;
+  const sceneTag = scene ? `Cena ${sceneIndex + 1}` : undefined;
   const bg = state.background;
   const l = state.lighting;
   const fx = state.effects;
@@ -630,7 +738,7 @@ export default function App() {
         <div className="viewport" ref={viewRef}>
           <div className={`frame ${bg.mode === 'transparent' && sc.backdrop === 'none' ? 'checker' : ''}`} style={{ width: frame.w, height: frame.h }} ref={hostRef} />
         </div>
-        {!media && (
+        {!shown && (
           <div className="empty-pill">
             <span>Envie um print ou uma gravação de tela — ou cole / arraste aqui.</span>
             <button className="mini-btn accent" onClick={() => fileRef.current?.click()}>Enviar</button>
@@ -643,7 +751,7 @@ export default function App() {
       <Timeline
         anim={anim}
         selected={selectedKey}
-        hasVideo={media?.kind === 'video'}
+        hasVideo={shown?.kind === 'video'}
         subscribe={subscribe}
         onPlayPause={playPause}
         onSeek={(t) => engineRef.current?.seek(t)}
@@ -655,6 +763,12 @@ export default function App() {
         onPreset={applyPreset}
         onMotion={applyMotion}
         onAreas={openAreas}
+        activeScene={activeScene}
+        sceneLabel={sceneLabel}
+        onAddScene={newScene}
+        onSelectScene={selectScene}
+        onRemoveScene={(id) => setState((s) => removeScene(s, id))}
+        onResizeScene={(id, len) => setState((s) => resizeScene(s, id, len))}
       />
 
       <aside className="inspector">
@@ -669,16 +783,16 @@ export default function App() {
           </button>
         </div>
         <div className="insp-body">
-          <Section title="Mídia" aside={media?.kind === 'video' ? 'Vídeo' : media ? 'Imagem' : undefined}>
+          <Section title="Mídia" aside={sceneTag ?? (shown?.kind === 'video' ? 'Vídeo' : shown ? 'Imagem' : undefined)}>
             <input ref={fileRef} type="file" accept="image/*,video/*" hidden onChange={(e) => loadFile(e.target.files?.[0])} />
-            {media ? (
+            {shown ? (
               <div className="media-card">
-                <span className="media-icon" aria-hidden>{media.kind === 'video' ? '▶' : '▣'}</span>
+                <span className="media-icon" aria-hidden>{shown.kind === 'video' ? '▶' : '▣'}</span>
                 <span className="card-text">
-                  <strong title={media.name}>{media.name}</strong>
+                  <strong title={shown.name}>{shown.name}</strong>
                   <span>
-                    {media.w} × {media.h}
-                    {media.duration ? ` · ${media.duration.toFixed(1)}s` : ''}
+                    {shown.w} × {shown.h}
+                    {shown.duration ? ` · ${shown.duration.toFixed(1)}s` : ''}
                   </span>
                 </span>
                 <button className="mini-btn" onClick={() => fileRef.current?.click()}>Trocar</button>
@@ -690,26 +804,26 @@ export default function App() {
                 <span>arraste, cole (⌘V) ou clique</span>
               </button>
             )}
-            {media && (
+            {shown && (
               <>
                 <Seg
                   label="Ajuste na tela"
-                  value={state.screen.fit}
+                  value={screen.fit}
                   options={[
                     { value: 'cover', label: 'Preencher' },
                     { value: 'contain', label: 'Caber inteira' },
                   ]}
-                  onChange={(fit) => set('screen', { fit })}
+                  onChange={(fit) => setScreen({ fit })}
                 />
-                {state.screen.fit === 'cover' && media.kind === 'image' && media.h / media.w > 2.4 && (
-                  <Field label="Rolagem" value={state.screen.scroll} min={0} max={1} def={0} onChange={(scroll) => set('screen', { scroll })} format={pct} />
+                {screen.fit === 'cover' && shown.kind === 'image' && shown.h / shown.w > 0.9 && (
+                  <Field label="Rolagem" value={screen.scroll} min={0} max={1} def={0} onChange={(scroll) => setScreen({ scroll })} format={pct} />
                 )}
-                {state.screen.fit === 'contain' && <ColorRow label="Cor ao redor" value={state.screen.fill} onChange={(fill) => set('screen', { fill })} />}
+                {screen.fit === 'contain' && <ColorRow label="Cor ao redor" value={screen.fill} onChange={(fill) => setScreen({ fill })} />}
               </>
             )}
           </Section>
 
-          <Section title="Aparelho">
+          <Section title="Aparelho" aside={sceneTag}>
             <Card thumb={<DeviceIcon kind={d.kind} />} title={DEVICES.find((x) => x.kind === d.kind)?.label ?? ''} subtitle={finish.label}>
               {(close) => (
                 <div className="pick-grid">
@@ -726,7 +840,7 @@ export default function App() {
               <span className="row-label">Acabamento</span>
               <span className="swatches" role="radiogroup" aria-label="Acabamento">
                 {FINISHES[d.kind].map((f) => (
-                  <button key={f.key} role="radio" aria-checked={d.finish === f.key} title={f.label} className={d.finish === f.key ? 'on' : ''} style={{ background: f.color }} onClick={() => set('device', { finish: f.key })} />
+                  <button key={f.key} role="radio" aria-checked={d.finish === f.key} title={f.label} className={d.finish === f.key ? 'on' : ''} style={{ background: f.color }} onClick={() => setDevice({ finish: f.key })} />
                 ))}
               </span>
             </div>
@@ -738,15 +852,17 @@ export default function App() {
                   { value: 'portrait', label: 'Retrato' },
                   { value: 'landscape', label: 'Paisagem' },
                 ]}
-                onChange={(orientation) => set('device', { orientation })}
+                onChange={(orientation) => setDevice({ orientation })}
               />
             )}
-            {d.kind === 'iphone' && <ToggleRow label="Ilha dinâmica" checked={d.showIsland} onChange={(showIsland) => set('device', { showIsland })} />}
-            {d.kind === 'macbook' && <Field label="Tampa" value={d.lidAngle} min={60} max={150} step={1} def={108} onChange={(lidAngle) => set('device', { lidAngle })} format={deg} />}
-            {d.kind === 'browser' && <TextRow label="Endereço" value={d.browserUrl} onChange={(browserUrl) => set('device', { browserUrl })} />}
-            <Field label="Girar" value={d.rotY} min={-180} max={180} step={1} def={0} onChange={(rotY) => set('device', { rotY })} format={deg} />
-            <Field label="Inclinar" value={d.rotX} min={-90} max={90} step={1} def={0} onChange={(rotX) => set('device', { rotX })} format={deg} />
-            <Field label="Rolar" value={d.rotZ} min={-180} max={180} step={1} def={0} onChange={(rotZ) => set('device', { rotZ })} format={deg} />
+            {d.kind === 'iphone' && <ToggleRow label="Ilha dinâmica" checked={d.showIsland} onChange={(showIsland) => setDevice({ showIsland })} />}
+            {d.kind === 'macbook' && <Field label="Tampa" value={d.lidAngle} min={60} max={150} step={1} def={108} onChange={(lidAngle) => setDevice({ lidAngle })} format={deg} />}
+            {d.kind === 'browser' && <TextRow label="Endereço" value={d.browserUrl} onChange={(browserUrl) => setDevice({ browserUrl })} />}
+            <Field label="Girar" value={d.rotY} min={-180} max={180} step={1} def={0} onChange={(rotY) => setDevice({ rotY })} format={deg} />
+            <Field label="Inclinar" value={d.rotX} min={-90} max={90} step={1} def={0} onChange={(rotX) => setDevice({ rotX })} format={deg} />
+            <Field label="Rolar" value={d.rotZ} min={-180} max={180} step={1} def={0} onChange={(rotZ) => setDevice({ rotZ })} format={deg} />
+            <Field label="Posição ↔" value={d.offsetX} min={-0.5} max={0.5} step={0.01} def={0} onChange={(offsetX) => setDevice({ offsetX })} format={signedPct} />
+            <Field label="Posição ↕" value={d.offsetY} min={-0.5} max={0.5} step={0.01} def={0} onChange={(offsetY) => setDevice({ offsetY })} format={signedPct} />
           </Section>
 
           <Section title="Cena">

@@ -1144,6 +1144,62 @@ kbd {
   background: color-mix(in srgb, var(--accent) 78%, #000);
 }
 
+/* Cenas: blocos clicáveis; a cena sob a agulha fica em destaque e mostra duração e excluir. */
+.tl-scene {
+  cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.tl-shot.tl-scene + .tl-shot.tl-scene {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+}
+
+.tl-shot.tl-scene.on {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+
+.tl-scene-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.tl-scene-tools {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.tl-scene-tools input {
+  width: 40px;
+  padding: 1px 3px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+
+.tl-scene-tools button {
+  border: 0;
+  padding: 0 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+.tl-scene-tools button:hover {
+  opacity: 1;
+}
+
 .tl-key {
   position: absolute;
   top: 5px;

@@ -13,7 +13,7 @@ import {
   ToneMappingMode,
   VignetteEffect,
 } from 'postprocessing';
-import { CAMERA_PRESETS, type AnimPresetKey, type CameraPresetKey, type EaseKey, type Keyframe, type MotionKind, type SceneState, type ToneMode, type Vec3 } from '../state';
+import { CAMERA_PRESETS, sceneAt, type AnimPresetKey, type CameraPresetKey, type EaseKey, type Keyframe, type MotionKind, type SceneState, type ToneMode, type Vec3 } from '../state';
 import { buildBackdrop, type BackdropBuild } from './backdrops';
 import { buildDevice, type DeviceBuild } from './devices';
 import { composeScreen, drawBackground, type ScreenImage } from './textures';
@@ -80,6 +80,10 @@ export class Engine {
   readonly controls: OrbitControls;
   onFocus?: () => void;
   onTime?: (t: number, playing: boolean) => void;
+  // Cena sob a agulha mudou (null = linha do tempo sem cenas).
+  onScene?: (id: string | null) => void;
+  // Biblioteca de mídias do editor: as cenas guardam só o id.
+  mediaSource?: (id: string) => ScreenImage | null;
 
   private composer: EffectComposer;
   private renderPass: RenderPass;
@@ -103,8 +107,13 @@ export class Engine {
   private focusPoint = new THREE.Vector3();
   private focusIsCustom = false;
   private image: ScreenImage | null = null;
+  private mainImage: ScreenImage | null = null;
   private scrollOverride: number | null = null;
+  // `raw` é o estado do editor; `state` é o que vale agora (com o aparelho e a tela da cena ativa).
+  private raw: SceneState;
   private state: SceneState;
+  private activeScene: string | null = null;
+  private activeMedia: string | null | undefined = undefined;
   private prev: SceneState | null = null;
   private dirty = true;
   private raf = 0;
@@ -119,6 +128,7 @@ export class Engine {
 
   constructor(private host: HTMLElement, state: SceneState) {
     this.state = state;
+    this.raw = state;
     const r = new THREE.WebGLRenderer({
       antialias: false,
       alpha: true,
@@ -161,6 +171,36 @@ export class Engine {
   // ---------- Cena ----------
 
   setState(next: SceneState) {
+    this.raw = next;
+    this.syncScene(this.anim.t, true);
+  }
+
+  // Aplica a cena do instante t: aparelho, tela e mídia dela; o resto do estado é comum.
+  private syncScene(t: number, force: boolean) {
+    const scene = sceneAt(this.raw.animation.scenes, t);
+    const id = scene?.id ?? null;
+    const switched = id !== this.activeScene;
+    if (!force && !switched) return;
+    this.activeScene = id;
+    const still = !!scene && !this.raw.animation.keyframes.some((k) => k.scene === scene.id);
+    this.applyState(scene ? { ...this.raw, device: scene.device, screen: scene.screen } : this.raw, !scene || still);
+    if (scene) {
+      if (scene.media !== this.activeMedia) {
+        this.activeMedia = scene.media;
+        this.showImage(scene.media ? (this.mediaSource?.(scene.media) ?? null) : null);
+      }
+    } else if (this.activeMedia !== undefined) {
+      this.activeMedia = undefined;
+      this.showImage(this.mainImage);
+    }
+    if (!switched) return;
+    // Cena sem quadros-chave: enquadra o aparelho novo em vez de herdar a câmera da anterior.
+    if (still) this.setCameraPreset(this.preset, false);
+    this.onScene?.(id);
+  }
+
+  // `allowReframe`: trocar de aparelho reenquadra a câmera (não quando a cena tem movimento próprio).
+  private applyState(next: SceneState, allowReframe: boolean) {
     const p = this.prev;
     this.state = next;
     const changed = (k: keyof SceneState) => !p || JSON.stringify(p[k]) !== JSON.stringify(next[k]);
@@ -174,7 +214,7 @@ export class Engine {
       pd.orientation !== d.orientation ||
       pd.showIsland !== d.showIsland ||
       pd.browserUrl !== d.browserUrl;
-    const reframe = !!pd && (pd.kind !== d.kind || pd.orientation !== d.orientation);
+    const reframe = allowReframe && !!pd && (pd.kind !== d.kind || pd.orientation !== d.orientation);
     let boundsDirty = false;
 
     if (rebuild) {
@@ -190,6 +230,7 @@ export class Engine {
       this.updateBounds();
       this.applyFloat(this.anim.t);
     }
+    if (!pd || pd.offsetX !== d.offsetX || pd.offsetY !== d.offsetY) this.applyOffset();
     if (p && changed('screen')) this.scrollOverride = null;
     if (rebuild || changed('screen')) this.updateScreen();
     if (changed('background') || changed('output')) this.updateBackground();
@@ -213,7 +254,19 @@ export class Engine {
     this.dirty = true;
   }
 
+  // Mídia da tela quando a linha do tempo não tem cenas.
   setImage(img: ScreenImage | null) {
+    this.mainImage = img;
+    if (this.activeScene === null) this.showImage(img);
+  }
+
+  // A mídia de uma cena foi trocada na biblioteca: mostra de novo se ela estiver na tela.
+  refreshMedia() {
+    this.activeMedia = undefined;
+    this.syncScene(this.anim.t, true);
+  }
+
+  private showImage(img: ScreenImage | null) {
     if (this.video && this.video !== img?.video) {
       this.video.pause();
       this.video.removeEventListener('seeked', this.onVideoSeeked);
@@ -232,8 +285,17 @@ export class Engine {
   // Garante que a tela mostra o quadro exato do vídeo no instante atual (antes de renderizar uma imagem).
   async settleVideo() {
     if (!this.video || !Number.isFinite(this.video.duration)) return;
-    await this.seekVideo(videoTimeAt(this.state.animation.clips ?? [], this.anim.t, this.video.duration));
+    await this.seekVideo(this.videoTime(this.anim.t));
     this.updateScreen();
+  }
+
+  // Tempo do vídeo da tela no instante t: relativo ao início da cena, ou pelos trechos (clips).
+  private videoTime(t: number) {
+    const v = this.video;
+    if (!v) return 0;
+    const scene = sceneAt(this.raw.animation.scenes, t);
+    if (!scene) return videoTimeAt(this.state.animation.clips ?? [], t, v.duration);
+    return Math.min(Math.max(t - scene.t + (scene.videoStart ?? 0), 0), Math.max(v.duration - 0.02, 0));
   }
 
   get videoDuration() {
@@ -250,8 +312,7 @@ export class Engine {
   private syncVideo(t: number, playing: boolean) {
     const v = this.video;
     if (!v || !Number.isFinite(v.duration)) return;
-    const a = this.state.animation;
-    const vt = videoTimeAt(a.clips ?? [], t, v.duration);
+    const vt = this.videoTime(t);
     if (playing) {
       if (v.paused) v.play().catch(() => undefined);
       if (Math.abs(v.currentTime - vt) > 0.15) v.currentTime = vt;
@@ -355,7 +416,12 @@ export class Engine {
   }
 
   canAnimate() {
-    return this.state.animation.keyframes.length >= 2 || this.state.animation.float || !!this.video;
+    const a = this.raw.animation;
+    return a.keyframes.length >= 2 || a.float || !!this.video || a.scenes.length > 1;
+  }
+
+  get currentScene() {
+    return this.activeScene;
   }
 
   play() {
@@ -387,7 +453,8 @@ export class Engine {
 
   // Quadro-chave com a câmera como está agora.
   captureKeyframe(t: number): Keyframe {
-    const focus = this.focusIsCustom ? this.focusPoint : this.controls.target;
+    // Sem foco escolhido, focusPoint já é o centro da tela (no MacBook o alvo da órbita fica à frente dela).
+    const focus = this.focusPoint;
     return {
       id: crypto.randomUUID(),
       t,
@@ -396,7 +463,28 @@ export class Engine {
       fov: this.camera.fov,
       focus: toVec3(focus),
       scroll: this.currentScroll(),
+      scene: this.activeScene ?? undefined,
     };
+  }
+
+  // Quadro-chave por ângulos (como setCameraOrbit), sem mexer na câmera; usado ao montar cenas pelo MCP.
+  orbitKeyframe(t: number, az: number, el: number, zoom = 1, scroll?: number): Keyframe {
+    this.applyFloat(0, true);
+    this.root.updateMatrixWorld(true);
+    const target = this.bounds.getCenter(new THREE.Vector3());
+    const pos = new THREE.Vector3().setFromSphericalCoords(this.fitDistance(az, el) * zoom, (90 - el) * DEG, az * DEG).add(target);
+    const k: Keyframe = {
+      id: crypto.randomUUID(),
+      t,
+      pos: toVec3(pos),
+      target: toVec3(target),
+      fov: this.camera.fov,
+      focus: toVec3(this.screenCenter()),
+      scroll: scroll ?? this.currentScroll(),
+      scene: this.activeScene ?? undefined,
+    };
+    this.applyFloat(this.anim.t);
+    return k;
   }
 
   // Movimentos prontos, sempre a partir do enquadramento atual.
@@ -646,7 +734,7 @@ export class Engine {
         const t = i * dt;
         this.applyTime(t);
         if (this.video) {
-          await this.seekVideo(videoTimeAt(this.state.animation.clips ?? [], t, this.video.duration));
+          await this.seekVideo(this.videoTime(t));
           this.updateScreen();
         }
         this.renderFrame(dt);
@@ -735,8 +823,10 @@ export class Engine {
   }
 
   private applyTime(t: number) {
+    this.syncScene(t, false);
     const a = this.state.animation;
-    const pose = samplePose(a.keyframes, t, a.ease);
+    const keys = this.activeScene ? a.keyframes.filter((k) => k.scene === this.activeScene) : a.keyframes;
+    const pose = samplePose(keys, t, a.ease);
     if (pose) {
       this.camera.position.copy(pose.pos);
       this.controls.target.copy(pose.target);
@@ -806,6 +896,20 @@ export class Engine {
       this.renderFrame();
     }
   };
+
+  // Desloca o aparelho no quadro sem mudar a perspectiva (deslocamento da lente, como numa câmera técnica).
+  private applyOffset() {
+    const { offsetX = 0, offsetY = 0 } = this.state.device;
+    const cam = this.camera;
+    if (!offsetX && !offsetY) {
+      if (cam.view?.enabled) cam.clearViewOffset();
+    } else {
+      // As frações valem para qualquer proporção: o three.js usa offset/fullWidth.
+      const fw = cam.aspect * 1000;
+      cam.setViewOffset(fw, 1000, -offsetX * fw, offsetY * 1000, fw, 1000);
+    }
+    this.dirty = true;
+  }
 
   // Planos de corte proporcionais à distância: mais precisão de profundidade de perto e de longe.
   private updateClip() {

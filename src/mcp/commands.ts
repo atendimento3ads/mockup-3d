@@ -14,15 +14,18 @@ import {
   LIGHT_PRESETS,
   LOOKS,
   MOTIONS,
+  sceneSpan,
   type AnimPresetKey,
   type AspectKey,
   type BackdropKind,
   type CameraPresetKey,
   type DeviceKind,
   type Keyframe,
+  type SceneClip,
   type SceneState,
   type VideoClip,
 } from '../state';
+import { patchScene, scaleTimeline, setSceneKeys } from '../scenes';
 import type { BlobResult, Handlers } from './bridge';
 
 // Comandos que o MCP pode executar no editor. Cada um altera o mesmo estado da interface
@@ -35,6 +38,9 @@ export interface CommandContext {
   hasScreenImage: () => boolean;
   hasBackdropImage: () => boolean;
   setScreenImage: (img: ScreenImage | null, name: string | null) => void;
+  // Biblioteca de mídias das cenas.
+  addMedia: (img: ScreenImage, name: string | null) => string;
+  mediaName: (id: string) => string | null;
   setBackdropImage: (img: ScreenImage | null, name: string | null) => void;
   setCameraPresetUI: (key: CameraPresetKey) => void;
 }
@@ -76,6 +82,17 @@ async function toJpeg(blob: Blob, quality = 0.9): Promise<Blob> {
   return c.convertToBlob({ type: 'image/jpeg', quality });
 }
 
+// Valores de aparelho validados (troca de tipo sem acabamento usa o primeiro acabamento do tipo).
+function deviceValues(base: SceneState['device'], a: Args): Partial<SceneState['device']> {
+  const kind = oneOf<DeviceKind>(a.kind, DEVICES.map((d) => d.kind), 'Aparelho');
+  const values = pick(base, a);
+  const target = kind ?? base.kind;
+  if (kind && kind !== base.kind && values.finish === undefined) values.finish = FINISHES[kind][0].key;
+  if (values.finish !== undefined) oneOf(values.finish, FINISHES[target].map((f) => f.key), 'Acabamento');
+  if (values.orientation !== undefined) oneOf(values.orientation, ['portrait', 'landscape'], 'Orientação');
+  return values;
+}
+
 export function createCommands(ctx: CommandContext): Handlers {
   const eng = () => {
     const e = ctx.engine();
@@ -92,6 +109,20 @@ export function createCommands(ctx: CommandContext): Handlers {
     const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
     return a >= 1 ? [even(long), even(long / a)] : [even(long * a), even(long)];
   };
+  // Cena sob a agulha (quando há cenas): set_device e set_screen editam ela.
+  const activeScene = () => state().animation.scenes.find((x) => x.id === ctx.engine()?.currentScene) ?? null;
+  const editDevice = (values: Partial<SceneState['device']>) => {
+    const sc = activeScene();
+    if (sc) ctx.commit(patchScene(state(), sc.id, { device: { ...sc.device, ...values } }));
+    else patch('device', values);
+    return activeScene()?.device ?? state().device;
+  };
+  const editScreen = (values: Partial<SceneState['screen']>) => {
+    const sc = activeScene();
+    if (sc) ctx.commit(patchScene(state(), sc.id, { screen: { ...sc.screen, ...values } }));
+    else patch('screen', values);
+    return activeScene()?.screen ?? state().screen;
+  };
   const playFromStart = (play: boolean) => {
     const e = eng();
     e.seek(0);
@@ -101,9 +132,10 @@ export function createCommands(ctx: CommandContext): Handlers {
   const summary = () => {
     const s = state();
     const e = ctx.engine();
+    const sc = activeScene();
     return {
-      device: s.device,
-      screen: { ...s.screen, hasImage: ctx.hasScreenImage(), videoSeconds: e?.videoDuration ? Math.round(e.videoDuration * 100) / 100 : null },
+      device: sc?.device ?? s.device,
+      screen: { ...(sc?.screen ?? s.screen), hasImage: ctx.hasScreenImage(), videoSeconds: e?.videoDuration ? Math.round(e.videoDuration * 100) / 100 : null },
       scene: { ...s.scene, hasPhoto: ctx.hasBackdropImage() },
       background: s.background,
       lighting: s.lighting,
@@ -118,6 +150,14 @@ export function createCommands(ctx: CommandContext): Handlers {
         floatAmount: s.animation.floatAmount,
         keyframes: s.animation.keyframes.map((k) => (k.cut ? `${k.t} (corte)` : k.t)),
         clips: s.animation.clips ?? [],
+        scenes: s.animation.scenes.map((x, i) => ({
+          scene: i + 1,
+          start: x.t,
+          device: `${x.device.kind} ${x.device.finish}`,
+          media: x.media ? ctx.mediaName(x.media) : null,
+          keyframes: s.animation.keyframes.filter((k) => k.scene === x.id).length,
+          active: x.id === sc?.id,
+        })),
         playing: e?.playing ?? false,
         time: Math.round((e?.time ?? 0) * 100) / 100,
       },
@@ -142,17 +182,7 @@ export function createCommands(ctx: CommandContext): Handlers {
       backgroundModes: ['solid', 'linear', 'radial', 'transparent'],
     }),
 
-    set_device: (a) => {
-      const s = state();
-      const kind = oneOf<DeviceKind>(a.kind, DEVICES.map((d) => d.kind), 'Aparelho');
-      const values = pick(s.device, a);
-      const target = kind ?? s.device.kind;
-      if (kind && kind !== s.device.kind && values.finish === undefined) values.finish = FINISHES[kind][0].key;
-      if (values.finish !== undefined) oneOf(values.finish, FINISHES[target].map((f) => f.key), 'Acabamento');
-      if (values.orientation !== undefined) oneOf(values.orientation, ['portrait', 'landscape'], 'Orientação');
-      patch('device', values);
-      return state().device;
-    },
+    set_device: (a) => editDevice(deviceValues(activeScene()?.device ?? state().device, a)),
 
     set_screen_image: async (a) => {
       const base64 = str(a.base64);
@@ -217,7 +247,7 @@ export function createCommands(ctx: CommandContext): Handlers {
       ctx.commit({
         ...s,
         effects: { ...s.effects, ...(dofPreset ? { dof: dofPreset.dof, bokeh: dofPreset.bokeh, focusRange: dofPreset.focusRange } : (effects ?? {})) },
-        animation: { ...s.animation, keyframes: keys, clips, duration: round(t), ease, float },
+        animation: { ...s.animation, keyframes: keys, clips, duration: round(t), ease, float, scenes: [] },
       });
       playFromStart(bool(a.play) ?? true);
       return { shots: shots.length, duration: round(t), cuts: shots.length - 1, keyframes: keys.length };
@@ -231,8 +261,71 @@ export function createCommands(ctx: CommandContext): Handlers {
     set_screen: (a) => {
       const values = pick(state().screen, a);
       if (values.fit !== undefined) oneOf(values.fit, ['cover', 'contain'], 'Ajuste');
-      patch('screen', values);
-      return state().screen;
+      return editScreen(values);
+    },
+
+    // Guarda uma imagem (base64) ou um vídeo (token da ponte) na biblioteca, para usar em cenas.
+    add_media: async (a) => {
+      const token = str(a.token);
+      let img: ScreenImage;
+      if (token) {
+        const res = await fetch(`/__mcp/file?token=${encodeURIComponent(token)}`, { headers: { 'X-Mockup-MCP': '1' } });
+        if (!res.ok) throw new Error('Não consegui baixar o vídeo da ponte local');
+        img = await loadVideo(URL.createObjectURL(await res.blob()));
+      } else {
+        const base64 = str(a.base64);
+        if (!base64) throw new Error('Mídia ausente');
+        img = await decodeImage(base64, str(a.mime) ?? 'image/png');
+      }
+      const id = ctx.addMedia(img, str(a.name) ?? 'mídia do Claude');
+      return { id, width: img.w, height: img.h, duration: img.video ? Math.round(img.video.duration * 100) / 100 : undefined };
+    },
+
+    // Linha do tempo com cenas: cada uma com aparelho, mídia (id de add_media) e movimento próprios.
+    // O movimento vem de quadros por ângulo (t relativo à cena, azimuth/elevation/zoom/scroll) ou de um preset.
+    set_scenes: (a) => {
+      const list = Array.isArray(a.scenes) ? (a.scenes as Args[]) : [];
+      if (!list.length) throw new Error('Informe pelo menos uma cena');
+      const e = eng();
+      e.pause();
+      const round = (v: number) => Math.round(v * 1000) / 1000;
+      const s0 = state();
+      let t = 0;
+      const scenes: SceneClip[] = list.map((sc, i) => {
+        const device = { ...s0.device, ...deviceValues(s0.device, (sc.device as Args) ?? {}) };
+        const screenArgs = (sc.screen as Args) ?? {};
+        const screen = { ...s0.screen, scroll: 0, ...pick(s0.screen, screenArgs) };
+        if (screen.fit !== 'cover' && screen.fit !== 'contain') throw new Error(`Cena ${i + 1}: ajuste inválido`);
+        const clip: SceneClip = { id: crypto.randomUUID(), t: round(t), device, screen, media: str(sc.media) ?? null, videoStart: num(sc.videoStart) };
+        t += Math.min(Math.max(num(sc.duration) ?? 5, 0.5), 60);
+        return clip;
+      });
+      const duration = round(t);
+      ctx.commit({ ...s0, animation: { ...s0.animation, scenes, keyframes: [], clips: [], duration } });
+      const keys: Keyframe[] = [];
+      list.forEach((sc, i) => {
+        const clip = scenes[i];
+        const [t0, t1] = sceneSpan(scenes, clip.id, duration);
+        e.seek(t0);
+        const spec = Array.isArray(sc.keyframes) ? (sc.keyframes as Args[]) : [];
+        if (spec.length) {
+          for (const k of spec) {
+            const kt = round(t0 + Math.min(Math.max(num(k.t) ?? 0, 0), t1 - t0));
+            keys.push(e.orbitKeyframe(kt, num(k.azimuth) ?? CAMERA_PRESETS.hero.az, num(k.elevation) ?? CAMERA_PRESETS.hero.el, num(k.zoom) ?? 1, num(k.scroll) ?? clip.screen.scroll));
+          }
+          return;
+        }
+        const key = oneOf<AnimPresetKey>(sc.preset, ANIM_PRESETS.map((p) => p.key), `Preset da cena ${i + 1}`);
+        if (!key) return;
+        const p = e.buildPreset(key);
+        if (!p) return;
+        const ks = p.keyframes.length >= 2 ? p.keyframes : [e.captureKeyframe(0), e.captureKeyframe(p.duration)];
+        const scale = (t1 - t0) / p.duration;
+        ks.forEach((k) => keys.push({ ...k, id: crypto.randomUUID(), scene: clip.id, t: round(t0 + k.t * scale) }));
+      });
+      ctx.commit({ ...state(), animation: { ...state().animation, keyframes: keys } });
+      playFromStart(bool(a.play) ?? false);
+      return summary().animation;
     },
 
     set_backdrop_image: async (a) => {
@@ -326,6 +419,15 @@ export function createCommands(ctx: CommandContext): Handlers {
       const p = e.buildPreset(key);
       if (!p) throw new Error('Não foi possível montar o preset');
       const s = state();
+      const sc = activeScene();
+      if (sc) {
+        // Numa cena: o movimento estica para a duração dela e a luz/desfoque ficam como estão.
+        const ks = p.keyframes.length >= 2 ? p.keyframes : [e.captureKeyframe(0), e.captureKeyframe(p.duration)];
+        ctx.commit(setSceneKeys(s, sc.id, ks, p.duration));
+        e.seek(sc.t);
+        if (bool(a.play) ?? true) e.play();
+        return { preset: key, scene: s.animation.scenes.indexOf(sc) + 1, keyframes: ks.length };
+      }
       ctx.commit({
         ...s,
         effects: { ...s.effects, ...(p.effects ?? {}) },
@@ -338,6 +440,7 @@ export function createCommands(ctx: CommandContext): Handlers {
     set_focus_areas: (a) => {
       const areas = Array.isArray(a.areas) ? (a.areas as Args[]) : [];
       if (!areas.length) throw new Error('Informe pelo menos uma área');
+      if (state().animation.scenes.length) throw new Error('Com cenas, use as áreas de foco pela interface (elas valem para a cena ativa)');
       const travel = num(a.travel) ?? 1.4;
       const hold = num(a.hold) ?? 1;
       const e = eng();
@@ -373,9 +476,8 @@ export function createCommands(ctx: CommandContext): Handlers {
       if (values.fps !== undefined && values.fps !== 30 && values.fps !== 60) throw new Error('fps deve ser 30 ou 60');
       const next = { ...s.animation, ...values };
       if (bool(a.clearKeyframes)) next.keyframes = [];
-      if (values.duration !== undefined && values.duration !== s.animation.duration && !a.clearKeyframes) {
-        const k = values.duration / s.animation.duration;
-        next.keyframes = s.animation.keyframes.map((x) => ({ ...x, t: Math.round(x.t * k * 100) / 100 }));
+      if (values.duration !== undefined && values.duration !== s.animation.duration) {
+        Object.assign(next, scaleTimeline({ ...s.animation, keyframes: next.keyframes }, values.duration));
       }
       ctx.commit({ ...s, animation: next });
       return summary().animation;

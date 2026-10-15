@@ -6,7 +6,7 @@ export type Orientation = 'portrait' | 'landscape';
 export type BgMode = 'solid' | 'linear' | 'radial' | 'transparent';
 export type LightPreset = 'studio' | 'soft' | 'dramatic' | 'warm' | 'neon';
 export type ToneMode = 'soft' | 'linear' | 'neutral' | 'agx';
-export type EaseKey = 'smooth' | 'flow' | 'linear' | 'snappy';
+export type EaseKey = 'smooth' | 'flow' | 'linear' | 'snappy' | 'dynamic';
 export type BackdropKind = 'none' | 'cove' | 'podium' | 'rocks' | 'dunes' | 'photo';
 export type AnimPresetKey = 'cinematicClose' | 'rackFocus' | 'reveal360' | 'slowOrbit' | 'diveIn' | 'topDown' | 'tiltShowcase' | 'websiteScroll' | 'floatHero';
 export type MotionKind = 'orbit' | 'pushIn' | 'pullBack' | 'reveal' | 'sweep' | 'scroll';
@@ -22,6 +22,21 @@ export interface Keyframe {
   scroll: number;
   // Corte seco: a câmera pula para este quadro, sem transição a partir do anterior.
   cut?: boolean;
+  // Cena dona do quadro (quando a linha do tempo tem cenas): cada cena anima só com os seus.
+  scene?: string;
+}
+
+// Cena: um trecho da linha do tempo com aparelho, tela e mídia próprios. Luz, cenário e efeitos
+// são comuns a todas. A cena vai do seu `t` até o início da próxima (ou o fim da animação).
+export interface SceneClip {
+  id: string;
+  t: number;
+  device: SceneState['device'];
+  screen: SceneState['screen'];
+  // Mídia na biblioteca do editor (imagens e vídeos não cabem no estado em JSON).
+  media: string | null;
+  // Para vídeos: segundo da gravação em que a cena começa.
+  videoStart?: number;
 }
 
 // Trecho do vídeo da tela: a partir do tempo `t` da animação, a tela mostra o vídeo desde `src` segundos.
@@ -43,6 +58,9 @@ export interface SceneState {
     rotZ: number;
     showIsland: boolean;
     browserUrl: string;
+    // Posição do aparelho no quadro (fração da largura/altura), sem mudar a perspectiva.
+    offsetX: number;
+    offsetY: number;
   };
   screen: { fit: 'cover' | 'contain'; scroll: number; fill: string };
   background: { mode: BgMode; color1: string; color2: string; angle: number };
@@ -85,6 +103,7 @@ export interface SceneState {
     float: boolean;
     floatAmount: number;
     clips: VideoClip[];
+    scenes: SceneClip[];
   };
 }
 
@@ -99,6 +118,8 @@ export const DEFAULT_STATE: SceneState = {
     rotZ: 0,
     showIsland: true,
     browserUrl: 'seusite.com.br',
+    offsetX: 0,
+    offsetY: 0,
   },
   screen: { fit: 'cover', scroll: 0, fill: '#000000' },
   background: { mode: 'radial', color1: '#f3f3f5', color2: '#d9dadf', angle: 160 },
@@ -124,8 +145,23 @@ export const DEFAULT_STATE: SceneState = {
     temperature: 0,
   },
   output: { aspect: '16:9' },
-  animation: { duration: 6, fps: 30, ease: 'smooth', keyframes: [], float: false, floatAmount: 0.6, clips: [] },
+  animation: { duration: 6, fps: 30, ease: 'smooth', keyframes: [], float: false, floatAmount: 0.6, clips: [], scenes: [] },
 };
+
+// Cena ativa no instante t (as cenas ficam em ordem de início; a primeira começa em 0).
+export function sceneAt(scenes: SceneClip[] | undefined, t: number): SceneClip | null {
+  if (!scenes?.length) return null;
+  let out = scenes[0];
+  for (const s of scenes) if (s.t <= t + 1e-6) out = s;
+  return out;
+}
+
+// Início e fim de uma cena.
+export function sceneSpan(scenes: SceneClip[], id: string, duration: number): [number, number] {
+  const i = scenes.findIndex((s) => s.id === id);
+  if (i < 0) return [0, duration];
+  return [scenes[i].t, i + 1 < scenes.length ? scenes[i + 1].t : duration];
+}
 
 export const DEVICES: { kind: DeviceKind; label: string }[] = [
   { kind: 'iphone', label: 'iPhone' },
@@ -272,6 +308,7 @@ export const EASE_OPTIONS: { value: EaseKey; label: string }[] = [
   { value: 'smooth', label: 'Suave' },
   { value: 'flow', label: 'Contínuo' },
   { value: 'snappy', label: 'Marcado' },
+  { value: 'dynamic', label: 'Dinâmico' },
   { value: 'linear', label: 'Constante' },
 ];
 

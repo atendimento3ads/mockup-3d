@@ -17,6 +17,8 @@ export const EASES: Record<EaseKey, (u: number) => number> = {
   flow: (u) => u,
   linear: (u) => u,
   snappy: (u) => (u < 0.5 ? 16 * Math.pow(u, 5) : 1 - Math.pow(-2 * u + 2, 5) / 2),
+  // "Dinâmico": já começa rápido (bom logo depois de um corte) e assenta no fim sem parar de vez.
+  dynamic: (u) => 0.25 * u + 0.75 * (1 - Math.pow(1 - u, 3)),
 };
 
 const vec = (a: Vec3) => new THREE.Vector3(a[0], a[1], a[2]);

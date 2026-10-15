@@ -13,11 +13,12 @@ Tudo roda no seu navegador: as imagens e vídeos que você envia não saem do se
 
 ## O que dá para fazer
 
-- **Aparelhos:** iPhone (proporções do 16 Pro), iPad, MacBook e janela de navegador, modelados em código, com acabamentos, rotação e orientação.
+- **Aparelhos:** iPhone (proporções do 16 Pro), iPad, MacBook e janela de navegador, modelados em código, com acabamentos, rotação, orientação e posição no quadro.
 - **Mídia:** print (PNG, JPG, WebP) ou gravação de tela (MP4). Cole com ⌘V, arraste ou envie. Prints longos de site podem rolar, e vídeos tocam sincronizados com a linha do tempo.
 - **Cena:** estúdio infinito, pódio, rochas, dunas ou uma foto sua ao fundo; cinco luzes de estúdio e sombra macia.
 - **Foco:** níveis de desfoque prontos (Sutil → Macro). Dê duplo clique no aparelho para escolher o ponto de foco.
-- **Animação:** nove presets (close cinematográfico, foco que passeia, revelação 360, órbita lenta…), áreas de foco desenhadas sobre o print, quadros-chave, cortes secos entre planos e flutuação.
+- **Animação:** nove presets (close cinematográfico, foco que passeia, revelação 360, órbita lenta…), áreas de foco desenhadas sobre o print, quadros-chave, cortes secos entre planos, flutuação e ritmos (suave, contínuo, dinâmico…).
+- **Cenas:** vários aparelhos e prints no mesmo vídeo. Cada cena da linha do tempo tem aparelho, mídia e movimento próprios; luz, cenário e foco valem para todas.
 - **Exportar:** PNG até 4K e vídeo MP4 (H.264, 30 ou 60 fps), gravado quadro a quadro.
 
 ## Rodar localmente
@@ -47,6 +48,7 @@ Depois é só pedir numa conversa, por exemplo: "Coloca o print ~/Desktop/app.pn
 ## Estrutura
 
 - `src/state.ts`: estado da cena (JSON) e presets.
+- `src/scenes.ts`: operações com cenas na linha do tempo.
 - `src/engine/`: renderizador, aparelhos, cenários, luz, sombra, efeitos e animação.
 - `src/ui/`: controles, linha do tempo e áreas de foco.
 - `src/mcp/`, `mcp/` e `bridge/`: comandos, servidor MCP e ponte local.

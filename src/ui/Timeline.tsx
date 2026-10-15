@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { ANIM_PRESETS, EASE_OPTIONS, MOTIONS, type AnimPresetKey, type EaseKey, type MotionKind, type SceneState } from '../state';
+import { ANIM_PRESETS, EASE_OPTIONS, MOTIONS, sceneSpan, type AnimPresetKey, type EaseKey, type MotionKind, type SceneClip, type SceneState } from '../state';
+import { scaleTimeline } from '../scenes';
 import { Dropdown, Seg } from './controls';
 
 type Anim = SceneState['animation'];
@@ -19,6 +20,12 @@ interface Props {
   onPreset: (key: AnimPresetKey) => void;
   onMotion: (kind: MotionKind) => void;
   onAreas: () => void;
+  activeScene: string | null;
+  sceneLabel: (scene: SceneClip, index: number) => string;
+  onAddScene: () => void;
+  onSelectScene: (id: string) => void;
+  onRemoveScene: (id: string) => void;
+  onResizeScene: (id: string, length: number) => void;
 }
 
 const fmt = (t: number) => {
@@ -68,6 +75,7 @@ export function Timeline(p: Props) {
     }
   };
 
+  const scenes = anim.scenes;
   // Planos: trechos entre cortes. Sem quadros-chave, um bloco só (flutuação ou vídeo).
   const shots = useMemo(() => {
     const ks = [...anim.keyframes].sort((a, b) => a.t - b.t);
@@ -107,7 +115,13 @@ export function Timeline(p: Props) {
     }
     if (!d.moved && Math.abs(e.clientX - d.startX) < 4) return;
     d.moved = true;
-    const t = Math.round(tFromX(e.clientX) * 10) / 10;
+    let t = Math.round(tFromX(e.clientX) * 10) / 10;
+    // Com cenas, o quadro não sai da cena dele.
+    const owner = anim.keyframes.find((x) => x.id === d.id)?.scene;
+    if (owner) {
+      const [t0, t1] = sceneSpan(scenes, owner, anim.duration);
+      t = Math.min(Math.max(t, t0), t1);
+    }
     p.onChange({ keyframes: anim.keyframes.map((k) => (k.id === d.id ? { ...k, t } : k)) });
   };
 
@@ -122,16 +136,14 @@ export function Timeline(p: Props) {
   };
 
   const setDuration = (v: number) => {
-    const duration = Math.min(Math.max(v || 1, 1), 60);
-    const k = duration / anim.duration;
-    p.onChange({ duration, keyframes: anim.keyframes.map((x) => ({ ...x, t: Math.round(x.t * k * 100) / 100 })) });
+    p.onChange(scaleTimeline(anim, Math.min(Math.max(v || 1, 1), 60)));
   };
 
   const step = anim.duration <= 4 ? 0.5 : anim.duration <= 15 ? 1 : 5;
   const ticks: number[] = [];
   for (let t = 0; t <= anim.duration + 1e-6; t += step) ticks.push(Math.round(t * 100) / 100);
   const selectedKey = anim.keyframes.find((k) => k.id === p.selected);
-  const canPlay = anim.keyframes.length >= 2 || anim.float || p.hasVideo;
+  const canPlay = anim.keyframes.length >= 2 || anim.float || p.hasVideo || scenes.length > 1;
   const pct = (t: number) => `${(t / anim.duration) * 100}%`;
   const advanced = mode === 'advanced';
 
@@ -169,6 +181,9 @@ export function Timeline(p: Props) {
         </Dropdown>
         <button className="ghost-btn" onClick={p.onAreas} title="Desenhe retângulos no print e a câmera visita cada um">
           Áreas de foco
+        </button>
+        <button className="ghost-btn" onClick={p.onAddScene} title="Nova cena no fim, com aparelho e mídia próprios">
+          + Cena
         </button>
 
         <span className="tl-spacer" />
@@ -217,7 +232,7 @@ export function Timeline(p: Props) {
           </>
         )}
         {anim.keyframes.length > 0 && (
-          <button className="ghost-btn quiet" onClick={() => p.onChange({ keyframes: [], clips: [] })} title="Remove a animação">
+          <button className="ghost-btn quiet" onClick={() => p.onChange({ keyframes: [], clips: [] })} title="Remove os movimentos de câmera (as cenas ficam)">
             Limpar
           </button>
         )}
@@ -226,7 +241,7 @@ export function Timeline(p: Props) {
       <div className="tl-body">
         <div className="tl-labels">
           <span />
-          <span>Planos</span>
+          <span>{scenes.length ? 'Cenas' : 'Planos'}</span>
           {advanced && <span>Câmera</span>}
         </div>
         <div className="tl-track" ref={trackRef} onPointerDown={onTrackDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
@@ -236,12 +251,59 @@ export function Timeline(p: Props) {
             ))}
           </div>
           <div className="tl-lane">
-            {shots.length === 0 && <span className="tl-empty">Escolha um preset em “Presets” ou desenhe áreas de foco para animar.</span>}
-            {shots.map((s, i) => (
-              <span key={i} className="tl-shot" style={{ left: pct(s.t0), width: `calc(${pct(s.t1 - s.t0)} - 2px)` }}>
-                {s.label} <em>{(s.t1 - s.t0).toFixed(1)}s</em>
-              </span>
-            ))}
+            {scenes.length > 0 ? (
+              scenes.map((sc, i) => {
+                const [t0, t1] = sceneSpan(scenes, sc.id, anim.duration);
+                const on = sc.id === p.activeScene;
+                return (
+                  <span
+                    key={sc.id}
+                    className={`tl-shot tl-scene ${on ? 'on' : ''}`}
+                    style={{ left: pct(t0), width: `calc(${pct(t1 - t0)} - 2px)` }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      p.onSelectScene(sc.id);
+                    }}
+                    title="Clique para editar esta cena"
+                  >
+                    <span className="tl-scene-name">{p.sceneLabel(sc, i)}</span>
+                    {on ? (
+                      <span className="tl-scene-tools" onPointerDown={(e) => e.stopPropagation()}>
+                        <input
+                          type="number"
+                          min={0.5}
+                          max={60}
+                          step={0.5}
+                          value={Math.round((t1 - t0) * 10) / 10}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            if (Number.isFinite(v)) p.onResizeScene(sc.id, v);
+                          }}
+                          aria-label="Duração da cena em segundos"
+                        />
+                        <em>s</em>
+                        {scenes.length > 1 && (
+                          <button onClick={() => p.onRemoveScene(sc.id)} aria-label="Excluir cena" title="Excluir cena">
+                            ✕
+                          </button>
+                        )}
+                      </span>
+                    ) : (
+                      <em>{(t1 - t0).toFixed(1)}s</em>
+                    )}
+                  </span>
+                );
+              })
+            ) : (
+              <>
+                {shots.length === 0 && <span className="tl-empty">Escolha um preset em “Presets” ou desenhe áreas de foco para animar.</span>}
+                {shots.map((s, i) => (
+                  <span key={i} className="tl-shot" style={{ left: pct(s.t0), width: `calc(${pct(s.t1 - s.t0)} - 2px)` }}>
+                    {s.label} <em>{(s.t1 - s.t0).toFixed(1)}s</em>
+                  </span>
+                ))}
+              </>
+            )}
           </div>
           {advanced && (
             <div className="tl-lane keys">

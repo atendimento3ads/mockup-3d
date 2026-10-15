@@ -172,6 +172,8 @@ server.registerTool(
       rotZ: z.number().optional().describe('roll'),
       showIsland: z.boolean().optional(),
       browserUrl: z.string().optional().describe('text shown in the browser window address bar'),
+      offsetX: z.number().min(-0.5).max(0.5).optional().describe('move the device in the frame, fraction of frame width (positive = right)'),
+      offsetY: z.number().min(-0.5).max(0.5).optional().describe('move the device in the frame, fraction of frame height (positive = up)'),
     },
   },
   simple('set_device'),
@@ -234,11 +236,82 @@ server.registerTool(
         )
         .min(1),
       dofLevel: z.enum(['off', 'subtle', 'medium', 'strong', 'macro']).optional(),
-      ease: z.enum(['smooth', 'flow', 'snappy', 'linear']).optional().describe('motion pacing inside each shot (default linear)'),
+      ease: z.enum(['smooth', 'flow', 'snappy', 'linear', 'dynamic']).optional().describe('motion pacing inside each shot (default linear)'),
       play: z.boolean().optional(),
     },
   },
   simple('set_shots'),
+);
+
+const deviceShape = z
+  .object({
+    kind: z.enum(['iphone', 'ipad', 'macbook', 'browser']).optional(),
+    finish: z.string().optional(),
+    orientation: z.enum(['portrait', 'landscape']).optional(),
+    lidAngle: z.number().min(60).max(150).optional(),
+    rotX: z.number().optional(),
+    rotY: z.number().optional(),
+    rotZ: z.number().optional(),
+    showIsland: z.boolean().optional(),
+    browserUrl: z.string().optional(),
+    offsetX: z.number().min(-0.5).max(0.5).optional(),
+    offsetY: z.number().min(-0.5).max(0.5).optional(),
+  })
+  .optional();
+
+server.registerTool(
+  'set_scenes',
+  {
+    title: 'Cenas na linha do tempo',
+    description:
+      'Build a timeline of scenes, each with its own device, screen media and camera motion (hard cut between scenes). Lighting, backdrop, effects and aspect are shared. Device fields not given come from the current device. Motion per scene: keyframes by angle (t in seconds from the scene start; azimuth/elevation/zoom like set_camera; scroll 0–1 of a tall screenshot) or an animation preset stretched to the scene. The editor UI shows the scenes in the timeline and edits the one under the playhead.',
+    inputSchema: {
+      scenes: z
+        .array(
+          z.object({
+            duration: z.number().min(0.5).max(60),
+            device: deviceShape,
+            image: z.string().optional().describe('absolute path of a screenshot for this scene'),
+            video: z.string().optional().describe('absolute path of a screen recording for this scene'),
+            videoStart: z.number().min(0).optional(),
+            screen: z.object({ fit: z.enum(['cover', 'contain']).optional(), fill: z.string().optional() }).optional(),
+            keyframes: z
+              .array(
+                z.object({
+                  t: z.number().min(0),
+                  azimuth: z.number().min(-180).max(180).optional(),
+                  elevation: z.number().min(-80).max(85).optional(),
+                  zoom: z.number().min(0.2).max(3).optional(),
+                  scroll: z.number().min(0).max(1).optional(),
+                }),
+              )
+              .optional(),
+            preset: z.enum(animPresets).optional(),
+          }),
+        )
+        .min(1),
+      play: z.boolean().optional(),
+    },
+  },
+  tool(async ({ scenes, play }) => {
+    const out = [];
+    for (const [i, sc] of scenes.entries()) {
+      let media = null;
+      if (sc.image) {
+        media = (await call('add_media', await readImage(sc.image), 120_000)).data.id;
+      } else if (sc.video) {
+        const src = resolvePath(sc.video);
+        if (!existsSync(src)) throw new Error(`Cena ${i + 1}: arquivo não encontrado: ${src}`);
+        const prepared = await prepareVideo(src, 'always');
+        const reg = await fetch(`${BASE}/__mcp/register-file`, { method: 'POST', headers: HEADERS, body: JSON.stringify({ path: prepared.file }) }).then((r) => r.json());
+        if (!reg.ok) throw new Error(reg.error ?? 'A ponte recusou o arquivo');
+        media = (await call('add_media', { token: reg.token, name: path.basename(src) }, 180_000)).data.id;
+      }
+      const { image, video, ...rest } = sc;
+      out.push({ ...rest, media });
+    }
+    return text((await call('set_scenes', { scenes: out, play }, 120_000)).data);
+  }),
 );
 
 server.registerTool(
@@ -406,11 +479,11 @@ server.registerTool(
   'set_animation',
   {
     title: 'Animação',
-    description: 'Timeline settings. Changing duration stretches existing keyframes. ease: smooth | flow (continuous) | snappy | linear.',
+    description: 'Timeline settings. Changing duration stretches existing keyframes. ease: smooth | flow (continuous) | snappy | linear | dynamic (starts fast, good right after a cut).',
     inputSchema: {
       duration: z.number().min(1).max(60).optional(),
       fps: z.union([z.literal(30), z.literal(60)]).optional(),
-      ease: z.enum(['smooth', 'flow', 'snappy', 'linear']).optional(),
+      ease: z.enum(['smooth', 'flow', 'snappy', 'linear', 'dynamic']).optional(),
       float: z.boolean().optional().describe('gentle floating motion of the device'),
       floatAmount: z.number().min(0.1).max(1.5).optional(),
       clearKeyframes: z.boolean().optional(),
