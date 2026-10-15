@@ -8,7 +8,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 // O MCP faz POST em /__mcp/command; a ponte repassa para a página pelo WebSocket do Vite e devolve
 // a resposta. Imagens e vídeos voltam da página por POST em /__mcp/blob.
 //
-// Segurança: só funciona no servidor de desenvolvimento (127.0.0.1), exige o cabeçalho X-Mockup-MCP
+// Segurança: só funciona no servidor de desenvolvimento (127.0.0.1), só atende pelo endereço local
+// (um site que aponte o próprio domínio para 127.0.0.1 é recusado), exige o cabeçalho X-Mockup-MCP
 // e recusa /command vindo de qualquer página web (navegadores sempre mandam Origin).
 
 type Client = { send(event: string, payload?: unknown): void };
@@ -28,6 +29,8 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
     req.on('error', reject);
   });
 }
+
+const LOCAL_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 
 function json(res: ServerResponse, code: number, body: unknown) {
   res.statusCode = code;
@@ -63,6 +66,7 @@ export function mcpBridge(): Plugin {
 
       server.middlewares.use('/__mcp', async (req, res, next) => {
         const url = new URL(req.url ?? '/', 'http://local');
+        if (!LOCAL_HOST.test(req.headers.host ?? '')) return json(res, 403, { ok: false, error: 'Endereço não permitido' });
         if (req.headers['x-mockup-mcp'] !== '1') return json(res, 403, { ok: false, error: 'Cabeçalho X-Mockup-MCP ausente' });
         const origin = req.headers.origin;
 

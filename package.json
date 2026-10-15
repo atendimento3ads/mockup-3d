@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5199 --strictPort",
-    "build": "tsc --noEmit && vite build && VITE_SKIN=v2 vite build --outDir dist/v2",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 5199"
   },
   "dependencies": {

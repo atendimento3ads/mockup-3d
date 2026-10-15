@@ -190,7 +190,7 @@ function buildPhone(spec: PhoneSpec, color: string, landscape: boolean, showIsla
   back.rotation.y = Math.PI;
   g.add(back);
 
-  addCameraModule(g, spec, color, frameMat, track);
+  addCameraModule(g, spec, color, track);
   if (spec.tablet) addTabletDetails(g, spec, frameMat, hole, track);
   else addPhoneDetails(g, spec, color, frameMat, hole, track);
   if (landscape) g.rotation.z = Math.PI / 2;
@@ -199,7 +199,7 @@ function buildPhone(spec: PhoneSpec, color: string, landscape: boolean, showIsla
   return { group: outer, screen, screenSize: { w: sw, h: sh }, screenMat, glareMat, layout: { pxW, pxH, landscape }, dispose };
 }
 
-function addCameraModule(g: THREE.Group, spec: PhoneSpec, color: string, frameMat: THREE.Material, track: Track) {
+function addCameraModule(g: THREE.Group, spec: PhoneSpec, color: string, track: Track) {
   const zb = -spec.d / 2;
   const size = spec.tablet ? 0.26 : 0.36;
   const margin = spec.tablet ? 0.045 : 0.035;

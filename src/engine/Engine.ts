@@ -126,7 +126,7 @@ export class Engine {
   private lastVideoTime = -1;
   private exporting = false;
 
-  constructor(private host: HTMLElement, state: SceneState) {
+  constructor(host: HTMLElement, state: SceneState) {
     this.state = state;
     this.raw = state;
     const r = new THREE.WebGLRenderer({
