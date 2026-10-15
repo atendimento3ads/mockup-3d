@@ -518,7 +518,6 @@ kbd {
   white-space: nowrap;
   border-color: var(--glass-line);
   backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   font-weight: 500;
 }
 
@@ -1371,7 +1370,6 @@ kbd {
   place-items: center;
   background: rgba(40, 36, 80, 0.25);
   backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 
 .modal {
@@ -1551,7 +1549,6 @@ body,
   border: 1px solid var(--glass-line);
   box-shadow: var(--shadow);
   backdrop-filter: blur(22px) saturate(1.5);
-  -webkit-backdrop-filter: blur(22px) saturate(1.5);
 }
 
 .tb-left {
