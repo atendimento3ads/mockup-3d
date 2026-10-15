@@ -4,6 +4,8 @@ Editor de mockups 3D no navegador: coloca prints e gravações de tela de apps e
 
 **▶ Testar agora: https://atendimento3ads.github.io/mockup-3d/**
 
+**✦ Interface v2 (mesmas funções, visual novo): https://atendimento3ads.github.io/mockup-3d/v2/**
+
 Tudo roda no seu navegador: as imagens e vídeos que você envia não saem do seu computador.
 
 | | |
@@ -51,4 +53,5 @@ Depois é só pedir numa conversa, por exemplo: "Coloca o print ~/Desktop/app.pn
 - `src/scenes.ts`: operações com cenas na linha do tempo.
 - `src/engine/`: renderizador, aparelhos, cenários, luz, sombra, efeitos e animação.
 - `src/ui/`: controles, linha do tempo e áreas de foco.
+- `src/styles.css` e `src/styles-v2.css`: as duas peles da interface (a v2 vale com `data-skin="v2"`; localmente, abra com `?skin=v2`).
 - `src/mcp/`, `mcp/` e `bridge/`: comandos, servidor MCP e ponte local.

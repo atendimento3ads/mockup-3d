@@ -1156,7 +1156,8 @@ kbd {
   background: color-mix(in srgb, var(--accent) 22%, var(--surface));
 }
 
-.tl-shot.tl-scene.on {
+.tl-shot.tl-scene.on,
+.tl-shot.tl-scene + .tl-shot.tl-scene.on {
   background: var(--accent);
   color: #fff;
   box-shadow: none;
