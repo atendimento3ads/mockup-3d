@@ -412,7 +412,7 @@ export default function App() {
     try {
       const [w, h] = exportDims();
       const blob = await engine.exportImage(w, h);
-      download(blob, `mockup-${w}x${h}.png`);
+      download(blob, `vidramock-${w}x${h}.png`);
       flash(`PNG exportado · ${w}×${h}`);
     } catch (err) {
       flash(err instanceof Error ? err.message : 'Falha ao exportar');
@@ -605,7 +605,7 @@ export default function App() {
         signal: abort.signal,
         onProgress: (progress) => setVideo((v) => (v ? { ...v, progress } : v)),
       });
-      download(blob, `mockup-${w}x${h}-${anim.fps}fps.mp4`);
+      download(blob, `vidramock-${w}x${h}-${anim.fps}fps.mp4`);
       flash(`Vídeo exportado · ${w}×${h} · ${(blob.size / 1048576).toFixed(1)} MB`);
     } catch (err) {
       if (!(err instanceof DOMException && err.name === 'AbortError')) flash(err instanceof Error ? err.message : 'Falha ao gravar o vídeo');
@@ -640,7 +640,7 @@ export default function App() {
               <path d="M3 7.5 12 12.5l9-5M12 12.5v9" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
             </svg>
           </span>
-          <span className="brand">Mockup 3D</span>
+          <span className="brand">VidraMock</span>
           <Dropdown label={<>Templates <Chev /></>} className="ghost">
             {(close) => (
               <div className="menu-grid">

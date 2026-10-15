@@ -1,4 +1,4 @@
-# Mockup 3D
+# VidraMock
 
 Editor de mockups 3D no navegador: coloca prints e gravações de tela de apps e sites dentro de aparelhos 3D (iPhone, iPad, MacBook e janela de navegador), com cenários de estúdio, desfoque com bokeh, animações de câmera e exportação em PNG (até 4K, com fundo transparente) e vídeo MP4.
 
@@ -33,7 +33,7 @@ npm run dev   # http://127.0.0.1:5199
 Rodando localmente, o servidor MCP (`mcp/server.mjs`) permite que o Claude monte a cena, anime e exporte no editor aberto. Ele fala com a aba do editor por uma ponte que só existe no servidor de desenvolvimento (`bridge/vite-mcp-bridge.ts`); essa ponte aceita apenas chamadas da própria máquina e não existe na versão publicada.
 
 ```bash
-claude mcp add --scope user mockup-3d -- node /caminho/para/mockup-3d/mcp/server.mjs
+claude mcp add --scope user vidramock -- node /caminho/para/o/projeto/mcp/server.mjs
 ```
 
 Depois é só pedir numa conversa, por exemplo: "Coloca o print ~/Desktop/app.png num iPhone preto no cenário de rochas, com desfoque forte, e exporta um vídeo 9:16."

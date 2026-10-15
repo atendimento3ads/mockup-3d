@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Servidor MCP do Mockup 3D: deixa o Claude montar cenas, animar e exportar no editor aberto.
+// Servidor MCP do VidraMock: deixa o Claude montar cenas, animar e exportar no editor aberto.
 // Fala com a aba do editor pela ponte local do Vite (http://127.0.0.1:5199/__mcp).
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -26,7 +26,7 @@ const CHILD_ENV = { ...process.env, PATH: `${NODE_BIN}:${process.env.PATH ?? '/u
 const run = promisify(execFile);
 const FFMPEG_DIRS = [NODE_BIN, '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'];
 const findBin = (name) => FFMPEG_DIRS.map((d) => path.join(d, name)).find((f) => existsSync(f));
-const CACHE = path.join(os.tmpdir(), 'mockup-3d-cache');
+const CACHE = path.join(os.tmpdir(), 'vidramock-cache');
 
 // Gravações de iPhone vêm em HEVC e com quadros variáveis: o navegador salta mal entre quadros.
 // Converte uma vez (com cache) para H.264 a 60 fps com quadro-chave a cada 0,25 s.
@@ -103,7 +103,7 @@ async function saveBlob(blob, target) {
   return file;
 }
 
-const server = new McpServer({ name: 'mockup-3d', version: '0.3.0' });
+const server = new McpServer({ name: 'vidramock', version: '0.4.0' });
 
 const camPresets = ['front', 'hero', 'threeQuarter', 'side', 'top', 'low', 'close', 'back'];
 const animPresets = ['cinematicClose', 'rackFocus', 'reveal360', 'slowOrbit', 'diveIn', 'topDown', 'tiltShowcase', 'websiteScroll', 'floatHero'];
@@ -112,7 +112,7 @@ const backdrops = ['none', 'cove', 'podium', 'rocks', 'dunes', 'photo'];
 
 server.registerTool(
   'editor_status',
-  { title: 'Status do editor', description: 'Check whether the Mockup 3D dev server is running and an editor tab is open (commands need an open tab).' },
+  { title: 'Status do editor', description: 'Check whether the VidraMock dev server is running and an editor tab is open (commands need an open tab).' },
   tool(async () => text({ url: BASE, project: PROJECT, ...(await status()) })),
 );
 
@@ -120,7 +120,7 @@ server.registerTool(
   'open_editor',
   {
     title: 'Abrir o editor',
-    description: 'Start the Mockup 3D dev server if needed and open the editor in the default browser. Call this first if other tools say the editor is not running or no tab is open.',
+    description: 'Start the VidraMock dev server if needed and open the editor in the default browser. Call this first if other tools say the editor is not running or no tab is open.',
     inputSchema: { openBrowser: z.boolean().optional().describe('Open the default browser if no editor tab is connected (default true)') },
   },
   tool(async ({ openBrowser = true }) => {
