@@ -1,7 +1,7 @@
 // Estado da cena em JSON puro: a interface edita isso e o motor aplica.
 // Ficar tudo aqui facilita salvar projetos e, mais tarde, controlar por MCP.
 
-export type DeviceKind = 'iphone' | 'ipad' | 'macbook' | 'browser';
+export type DeviceKind = 'iphone' | 'ipad' | 'macbook' | 'imac' | 'browser';
 export type Orientation = 'portrait' | 'landscape';
 export type BgMode = 'solid' | 'linear' | 'radial' | 'transparent';
 export type LightPreset = 'studio' | 'soft' | 'dramatic' | 'warm' | 'neon';
@@ -61,6 +61,8 @@ export interface SceneState {
     // Posição do aparelho no quadro (fração da largura/altura), sem mudar a perspectiva.
     offsetX: number;
     offsetY: number;
+    // Logo da Apple no verso (iPhone, iPad, MacBook e iMac).
+    logo: boolean;
   };
   screen: { fit: 'cover' | 'contain'; scroll: number; fill: string };
   background: { mode: BgMode; color1: string; color2: string; angle: number };
@@ -110,7 +112,7 @@ export interface SceneState {
 export const DEFAULT_STATE: SceneState = {
   device: {
     kind: 'iphone',
-    finish: 'natural',
+    finish: 'preto',
     orientation: 'portrait',
     lidAngle: 108,
     rotX: 0,
@@ -120,6 +122,7 @@ export const DEFAULT_STATE: SceneState = {
     browserUrl: 'seusite.com.br',
     offsetX: 0,
     offsetY: 0,
+    logo: true,
   },
   screen: { fit: 'cover', scroll: 0, fill: '#000000' },
   background: { mode: 'radial', color1: '#f3f3f5', color2: '#d9dadf', angle: 160 },
@@ -164,27 +167,48 @@ export function sceneSpan(scenes: SceneClip[], id: string, duration: number): [n
 }
 
 export const DEVICES: { kind: DeviceKind; label: string }[] = [
-  { kind: 'iphone', label: 'iPhone' },
-  { kind: 'ipad', label: 'iPad' },
-  { kind: 'macbook', label: 'MacBook' },
+  { kind: 'iphone', label: 'iPhone 17' },
+  { kind: 'ipad', label: 'iPad 11"' },
+  { kind: 'macbook', label: 'MacBook Pro 14"' },
+  { kind: 'imac', label: 'iMac 24"' },
   { kind: 'browser', label: 'Navegador' },
 ];
 
-export const FINISHES: Record<DeviceKind, { key: string; label: string; color: string }[]> = {
+// Cores oficiais (tirados dos seletores de cor de apple.com/br). No iMac, `color` é a traseira
+// e `color2` o tom claro da frente e do pé.
+export interface Finish {
+  key: string;
+  label: string;
+  color: string;
+  color2?: string;
+}
+
+export const FINISHES: Record<DeviceKind, Finish[]> = {
   iphone: [
-    { key: 'natural', label: 'Titânio natural', color: '#b3aea5' },
-    { key: 'preto', label: 'Titânio preto', color: '#3a393b' },
-    { key: 'branco', label: 'Titânio branco', color: '#e4e3df' },
-    { key: 'deserto', label: 'Titânio deserto', color: '#c2a68d' },
-    { key: 'azul', label: 'Titânio azul', color: '#3f4859' },
+    { key: 'preto', label: 'Preto', color: '#353839' },
+    { key: 'branco', label: 'Branco', color: '#f5f5f5' },
+    { key: 'azul', label: 'Azul-névoa', color: '#96aed1' },
+    { key: 'salvia', label: 'Sálvia', color: '#a9b689' },
+    { key: 'lavanda', label: 'Lavanda', color: '#dfceea' },
   ],
   ipad: [
-    { key: 'prata', label: 'Prateado', color: '#d5d6d8' },
-    { key: 'preto', label: 'Preto espacial', color: '#3a3b3e' },
+    { key: 'prata', label: 'Prateado', color: '#e3e4e5' },
+    { key: 'azul', label: 'Azul', color: '#6480a3' },
+    { key: 'rosa', label: 'Rosa', color: '#de6274' },
+    { key: 'amarelo', label: 'Amarelo', color: '#f0d95b' },
   ],
   macbook: [
-    { key: 'prata', label: 'Prateado', color: '#cfd1d4' },
-    { key: 'preto', label: 'Preto espacial', color: '#2d2e31' },
+    { key: 'preto', label: 'Preto-espacial', color: '#2e2c2e' },
+    { key: 'prata', label: 'Prateado', color: '#e3e4e5' },
+  ],
+  imac: [
+    { key: 'azul', label: 'Azul', color: '#547eae', color2: '#acbfd8' },
+    { key: 'roxo', label: 'Roxo', color: '#827eb2', color2: '#b8b2cf' },
+    { key: 'rosa', label: 'Rosa', color: '#de5f7d', color2: '#f3b5c3' },
+    { key: 'laranja', label: 'Laranja', color: '#e3704b', color2: '#f5c1a7' },
+    { key: 'amarelo', label: 'Amarelo', color: '#edd142', color2: '#f5e4ae' },
+    { key: 'verde', label: 'Verde', color: '#3e935c', color2: '#a4c2ae' },
+    { key: 'prata', label: 'Prateado', color: '#e3e4e5', color2: '#e3e4e5' },
   ],
   browser: [
     { key: 'claro', label: 'Claro', color: '#eef0f3' },
@@ -192,9 +216,10 @@ export const FINISHES: Record<DeviceKind, { key: string; label: string; color: s
   ],
 };
 
-export function finishColor(kind: DeviceKind, finish: string): string {
+// Acabamento escolhido (ou o primeiro, se o nome não existir mais).
+export function finishOf(kind: DeviceKind, finish: string): Finish {
   const list = FINISHES[kind];
-  return (list.find((f) => f.key === finish) ?? list[0]).color;
+  return list.find((f) => f.key === finish) ?? list[0];
 }
 
 export const ASPECTS: Record<AspectKey, number> = {

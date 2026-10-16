@@ -70,6 +70,30 @@ export function resizeScene(s: SceneState, id: string, length: number): SceneSta
   });
 }
 
+// Leva a cena para outra posição (índice a partir de 0). Cada cena mantém a duração e o movimento;
+// os inícios são recalculados na ordem nova e os quadros-chave andam junto com a sua cena.
+export function moveScene(s: SceneState, id: string, to: number): SceneState {
+  const { scenes, keyframes, duration } = s.animation;
+  const from = scenes.findIndex((x) => x.id === id);
+  const target = Math.min(Math.max(Math.round(to), 0), scenes.length - 1);
+  if (from < 0 || target === from) return s;
+  const lengths = new Map(scenes.map((x) => [x.id, sceneSpan(scenes, x.id, duration)[1] - x.t]));
+  const order = scenes.filter((x) => x.id !== id);
+  order.splice(target, 0, scenes[from]);
+  const shift = new Map<string, number>();
+  let t = 0;
+  const next = order.map((x) => {
+    const moved = { ...x, t: round(t) };
+    shift.set(x.id, moved.t - x.t);
+    t += lengths.get(x.id) ?? 0;
+    return moved;
+  });
+  return withAnim(s, {
+    scenes: next,
+    keyframes: keyframes.map((k) => (k.scene && shift.get(k.scene) ? { ...k, t: round(k.t + shift.get(k.scene)!) } : k)),
+  });
+}
+
 // Muda a duração total: cenas e quadros-chave esticam juntos.
 export function scaleTimeline(anim: Anim, duration: number): Partial<Anim> {
   const k = duration / anim.duration;

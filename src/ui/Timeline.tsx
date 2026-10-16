@@ -26,6 +26,7 @@ interface Props {
   onSelectScene: (id: string) => void;
   onRemoveScene: (id: string) => void;
   onResizeScene: (id: string, length: number) => void;
+  onMoveScene: (id: string, to: number) => void;
 }
 
 const fmt = (t: number) => {
@@ -34,7 +35,7 @@ const fmt = (t: number) => {
   return `${String(m).padStart(2, '0')}:${s.toFixed(1).padStart(4, '0')}`;
 };
 
-type Drag = { kind: 'head' } | { kind: 'key'; id: string; startX: number; moved: boolean };
+type Drag = { kind: 'head' } | { kind: 'key'; id: string; startX: number; moved: boolean } | { kind: 'scene'; id: string; startX: number; moved: boolean };
 
 function capture(el: HTMLElement, pointerId: number) {
   try {
@@ -56,6 +57,8 @@ export function Timeline(p: Props) {
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [mode, setMode] = useState<'simple' | 'advanced'>(readMode);
+  // Cena sendo arrastada: deslocamento em pixels e posição onde vai entrar.
+  const [sceneDrag, setSceneDrag] = useState<{ id: string; dx: number; to: number } | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
   const { anim } = p;
@@ -106,11 +109,35 @@ export function Timeline(p: Props) {
     drag.current = { kind: 'key', id, startX: e.clientX, moved: false };
   };
 
+  // Posição de destino da cena arrastada: quantas outras cenas ficam com o meio à esquerda do meio dela.
+  const dropIndex = (id: string, dx: number) => {
+    const w = trackRef.current!.getBoundingClientRect().width;
+    const [t0, t1] = sceneSpan(scenes, id, anim.duration);
+    const mid = (t0 + t1) / 2 + (dx / w) * anim.duration;
+    return scenes.filter((x) => x.id !== id).filter((x) => {
+      const [a, b] = sceneSpan(scenes, x.id, anim.duration);
+      return (a + b) / 2 < mid;
+    }).length;
+  };
+
+  const onSceneDown = (e: ReactPointerEvent<HTMLSpanElement>, id: string) => {
+    e.stopPropagation();
+    capture(trackRef.current!, e.pointerId);
+    drag.current = { kind: 'scene', id, startX: e.clientX, moved: false };
+  };
+
   const onMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d) return;
     if (d.kind === 'head') {
       p.onSeek(tFromX(e.clientX));
+      return;
+    }
+    if (d.kind === 'scene') {
+      const dx = e.clientX - d.startX;
+      if (!d.moved && Math.abs(dx) < 5) return;
+      d.moved = true;
+      setSceneDrag({ id: d.id, dx, to: dropIndex(d.id, dx) });
       return;
     }
     if (!d.moved && Math.abs(e.clientX - d.startX) < 4) return;
@@ -128,6 +155,13 @@ export function Timeline(p: Props) {
   const onUp = () => {
     const d = drag.current;
     drag.current = null;
+    if (d?.kind === 'scene') {
+      // Arrastou: muda a ordem. Só clicou: seleciona a cena.
+      if (d.moved && sceneDrag) p.onMoveScene(d.id, sceneDrag.to);
+      else p.onSelectScene(d.id);
+      setSceneDrag(null);
+      return;
+    }
     if (d?.kind === 'key') {
       const k = anim.keyframes.find((x) => x.id === d.id);
       p.onSelect(d.id);
@@ -255,16 +289,14 @@ export function Timeline(p: Props) {
               scenes.map((sc, i) => {
                 const [t0, t1] = sceneSpan(scenes, sc.id, anim.duration);
                 const on = sc.id === p.activeScene;
+                const dragging = sceneDrag?.id === sc.id;
                 return (
                   <span
                     key={sc.id}
-                    className={`tl-shot tl-scene ${on ? 'on' : ''}`}
-                    style={{ left: pct(t0), width: `calc(${pct(t1 - t0)} - 2px)` }}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      p.onSelectScene(sc.id);
-                    }}
-                    title="Clique para editar esta cena"
+                    className={`tl-shot tl-scene ${on ? 'on' : ''} ${dragging ? 'dragging' : ''}`}
+                    style={{ left: pct(t0), width: `calc(${pct(t1 - t0)} - 2px)`, transform: dragging ? `translateX(${sceneDrag.dx}px)` : undefined }}
+                    onPointerDown={(e) => onSceneDown(e, sc.id)}
+                    title="Clique para editar esta cena · arraste para mudar a ordem"
                   >
                     <span className="tl-scene-name">{p.sceneLabel(sc, i)}</span>
                     {on ? (
@@ -294,7 +326,13 @@ export function Timeline(p: Props) {
                   </span>
                 );
               })
-            ) : (
+            ) : null}
+            {sceneDrag && (() => {
+              const others = scenes.filter((x) => x.id !== sceneDrag.id);
+              const at = sceneDrag.to < others.length ? sceneSpan(scenes, others[sceneDrag.to].id, anim.duration)[0] : anim.duration;
+              return <span className="tl-drop" style={{ left: pct(at) }} aria-hidden />;
+            })()}
+            {scenes.length === 0 && (
               <>
                 {shots.length === 0 && <span className="tl-empty">Escolha um preset em “Presets” ou desenhe áreas de foco para animar.</span>}
                 {shots.map((s, i) => (

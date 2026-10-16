@@ -25,7 +25,7 @@ import {
   type SceneState,
   type VideoClip,
 } from '../state';
-import { patchScene, scaleTimeline, setSceneKeys } from '../scenes';
+import { moveScene, patchScene, scaleTimeline, setSceneKeys } from '../scenes';
 import type { BlobResult, Handlers } from './bridge';
 
 // Comandos que o MCP pode executar no editor. Cada um altera o mesmo estado da interface
@@ -251,6 +251,21 @@ export function createCommands(ctx: CommandContext): Handlers {
       });
       playFromStart(bool(a.play) ?? true);
       return { shots: shots.length, duration: round(t), cuts: shots.length - 1, keyframes: keys.length };
+    },
+
+    // Muda a ordem das cenas (posições a partir de 1).
+    move_scene: (a) => {
+      const s = state();
+      const list = s.animation.scenes;
+      const from = num(a.scene);
+      const to = num(a.to);
+      if (!list.length) throw new Error('A linha do tempo não tem cenas');
+      if (from === undefined || to === undefined || from < 1 || from > list.length || to < 1 || to > list.length) throw new Error(`Informe scene e to entre 1 e ${list.length}`);
+      const id = list[from - 1].id;
+      const next = moveScene(s, id, to - 1);
+      ctx.commit(next);
+      eng().seek(next.animation.scenes.find((x) => x.id === id)!.t);
+      return summary().animation;
     },
 
     clear_screen_image: () => {

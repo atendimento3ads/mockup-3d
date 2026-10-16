@@ -102,6 +102,11 @@ select {
   color: inherit;
 }
 
+kbd,
+code {
+  font-family: inherit;
+}
+
 button {
   cursor: pointer;
 }
@@ -373,20 +378,22 @@ kbd,
 }
 
 .menu-list.help {
-  min-width: 260px;
+  min-width: 330px;
   padding-bottom: 4px;
 }
 
 .menu-list.help p {
   margin: 0;
   padding: 5px 8px;
+  display: grid;
+  grid-template-columns: 136px 1fr;
+  gap: 10px;
+  align-items: baseline;
   font-size: 12px;
   color: var(--muted);
 }
 
 kbd {
-  display: inline-block;
-  min-width: 110px;
   color: var(--text);
   font-weight: 600;
 }
@@ -531,6 +538,59 @@ kbd {
   background: rgba(106, 92, 255, 0.08);
   font-weight: 600;
   pointer-events: none;
+}
+
+/* Barra de ferramentas do canvas: girar/mover, desfazer/refazer e enquadrar. */
+.canvas-tools {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 5px;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+}
+
+.canvas-tools button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+}
+
+.canvas-tools button:hover:not(:disabled) {
+  background: var(--tile);
+  color: var(--text);
+}
+
+.canvas-tools button.on {
+  background: var(--pill-dark);
+  box-shadow: var(--pill-dark-shadow);
+  color: var(--ink-text);
+}
+
+.canvas-tools button:disabled {
+  opacity: 0.32;
+}
+
+.ct-sep {
+  width: 18px;
+  height: 1px;
+  margin: 3px 0;
+  background: var(--line-strong);
 }
 
 /* ---------- Botões pequenos ---------- */
@@ -970,6 +1030,10 @@ kbd {
   gap: 6px;
 }
 
+.pick-grid.devices {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .pick-grid.scenes {
   grid-template-columns: repeat(3, 1fr);
 }
@@ -1266,6 +1330,33 @@ kbd {
   background: var(--tint-strong);
   color: #191a24;
   box-shadow: 0 4px 14px rgba(90, 80, 200, 0.25);
+}
+
+.tl-shot.tl-scene {
+  cursor: grab;
+  transition: box-shadow 0.15s;
+}
+
+.tl-shot.tl-scene.dragging {
+  z-index: 3;
+  cursor: grabbing;
+  opacity: 0.92;
+  box-shadow: 0 8px 22px rgba(60, 50, 140, 0.28);
+  transition: none;
+}
+
+/* Onde a cena arrastada vai entrar. */
+.tl-drop {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  z-index: 4;
+  pointer-events: none;
 }
 
 .tl-scene-name {

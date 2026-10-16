@@ -163,8 +163,8 @@ server.registerTool(
     title: 'Aparelho',
     description: 'Choose the device and its pose. Rotations are in degrees around the device center.',
     inputSchema: {
-      kind: z.enum(['iphone', 'ipad', 'macbook', 'browser']).optional(),
-      finish: z.string().optional().describe('iphone: natural|preto|branco|deserto|azul; ipad/macbook: prata|preto; browser: claro|escuro'),
+      kind: z.enum(['iphone', 'ipad', 'macbook', 'imac', 'browser']).optional(),
+      finish: z.string().optional().describe('iphone (iPhone 17): preto|branco|azul|salvia|lavanda; ipad (iPad 11): prata|azul|rosa|amarelo; macbook (MacBook Pro 14): preto|prata; imac (iMac 24): azul|roxo|rosa|laranja|amarelo|verde|prata; browser: claro|escuro'),
       orientation: z.enum(['portrait', 'landscape']).optional().describe('iphone/ipad only'),
       lidAngle: z.number().min(60).max(150).optional().describe('macbook lid opening in degrees'),
       rotX: z.number().optional().describe('tilt forward/back'),
@@ -172,6 +172,7 @@ server.registerTool(
       rotZ: z.number().optional().describe('roll'),
       showIsland: z.boolean().optional(),
       browserUrl: z.string().optional().describe('text shown in the browser window address bar'),
+      logo: z.boolean().optional().describe('Apple logo on the back (default true)'),
       offsetX: z.number().min(-0.5).max(0.5).optional().describe('move the device in the frame, fraction of frame width (positive = right)'),
       offsetY: z.number().min(-0.5).max(0.5).optional().describe('move the device in the frame, fraction of frame height (positive = up)'),
     },
@@ -245,7 +246,7 @@ server.registerTool(
 
 const deviceShape = z
   .object({
-    kind: z.enum(['iphone', 'ipad', 'macbook', 'browser']).optional(),
+    kind: z.enum(['iphone', 'ipad', 'macbook', 'imac', 'browser']).optional(),
     finish: z.string().optional(),
     orientation: z.enum(['portrait', 'landscape']).optional(),
     lidAngle: z.number().min(60).max(150).optional(),
@@ -254,6 +255,7 @@ const deviceShape = z
     rotZ: z.number().optional(),
     showIsland: z.boolean().optional(),
     browserUrl: z.string().optional(),
+    logo: z.boolean().optional(),
     offsetX: z.number().min(-0.5).max(0.5).optional(),
     offsetY: z.number().min(-0.5).max(0.5).optional(),
   })
@@ -312,6 +314,16 @@ server.registerTool(
     }
     return text((await call('set_scenes', { scenes: out, play }, 120_000)).data);
   }),
+);
+
+server.registerTool(
+  'move_scene',
+  {
+    title: 'Mudar a ordem das cenas',
+    description: 'Move a scene to another position in the timeline (positions start at 1). Each scene keeps its length and camera motion.',
+    inputSchema: { scene: z.number().int().min(1).describe('current position of the scene'), to: z.number().int().min(1).describe('new position') },
+  },
+  simple('move_scene'),
 );
 
 server.registerTool(

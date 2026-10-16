@@ -62,6 +62,8 @@ interface Tween {
   dur: number;
 }
 
+export type Tool = 'orbit' | 'hand';
+
 export interface VideoOptions {
   width: number;
   height: number;
@@ -84,6 +86,8 @@ export class Engine {
   onScene?: (id: string | null) => void;
   // Biblioteca de mídias do editor: as cenas guardam só o id.
   mediaSource?: (id: string) => ScreenImage | null;
+  // O usuário começou a arrastar a câmera (usado para o "segure Espaço para mover").
+  onControlsStart?: () => void;
 
   private composer: EffectComposer;
   private renderPass: RenderPass;
@@ -125,6 +129,7 @@ export class Engine {
   private video: HTMLVideoElement | null = null;
   private lastVideoTime = -1;
   private exporting = false;
+  private tool: Tool = 'orbit';
 
   constructor(host: HTMLElement, state: SceneState) {
     this.state = state;
@@ -153,7 +158,14 @@ export class Engine {
     this.controls.minDistance = 0.3;
     this.controls.maxDistance = 40;
     this.controls.addEventListener('change', () => (this.dirty = true));
-    this.controls.addEventListener('start', () => (this.tween = null));
+    this.controls.addEventListener('start', () => {
+      this.tween = null;
+      if (this.tool === 'hand') r.domElement.style.cursor = 'grabbing';
+      this.onControlsStart?.();
+    });
+    this.controls.addEventListener('end', () => {
+      if (this.tool === 'hand') r.domElement.style.cursor = 'grab';
+    });
 
     this.composer = new EffectComposer(r, {
       frameBufferType: THREE.HalfFloatType,
@@ -213,6 +225,7 @@ export class Engine {
       pd.finish !== d.finish ||
       pd.orientation !== d.orientation ||
       pd.showIsland !== d.showIsland ||
+      pd.logo !== d.logo ||
       pd.browserUrl !== d.browserUrl;
     const reframe = allowReframe && !!pd && (pd.kind !== d.kind || pd.orientation !== d.orientation);
     let boundsDirty = false;
@@ -390,6 +403,23 @@ export class Engine {
     dTheta = Math.atan2(Math.sin(dTheta), Math.cos(dTheta));
     to.theta = from.theta + dTheta;
     this.tween = { from, to, t0: this.controls.target.clone(), t1: target, start: performance.now(), dur: 700 };
+  }
+
+  // Ferramenta do arrasto com o botão esquerdo: girar a câmera ou mover o quadro (mãozinha).
+  // O botão direito faz sempre o contrário.
+  setTool(tool: Tool) {
+    this.tool = tool;
+    const hand = tool === 'hand';
+    this.controls.mouseButtons = hand
+      ? { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }
+      : { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+    this.controls.touches = hand ? { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE } : { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    this.renderer.domElement.style.cursor = hand ? 'grab' : '';
+  }
+
+  // Reenquadra o aparelho no ângulo atual (atalho F).
+  frame() {
+    this.setCameraPreset(this.preset, true);
   }
 
   resize(w: number, h: number) {

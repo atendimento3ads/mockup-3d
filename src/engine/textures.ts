@@ -261,7 +261,8 @@ export function grainAt(repeatX: number, repeatY: number): THREE.Texture {
   return t;
 }
 
-// Tampo do MacBook: teclado, alto-falantes e trackpad, com mapa de rugosidade/metal no mesmo layout.
+// Tampo do MacBook Pro: teclado (fileira de funções em altura cheia e Touch ID, moldura preta),
+// alto-falantes e trackpad, com mapa de rugosidade/metal no mesmo layout.
 export function drawDeck(dark: boolean, W: number, D: number): { map: THREE.CanvasTexture; orm: THREE.CanvasTexture } {
   const cw = 2048;
   const ch = Math.round((cw * D) / W);
@@ -272,7 +273,7 @@ export function drawDeck(dark: boolean, W: number, D: number): { map: THREE.Canv
   // Canal G = rugosidade, B = metalicidade (convenção do three.js).
   const orm = (rough: number, metal: number) => `rgb(255, ${Math.round(rough * 255)}, ${Math.round(metal * 255)})`;
 
-  c.fillStyle = dark ? '#2d2e31' : '#cfd1d4';
+  c.fillStyle = dark ? '#2e2c2e' : '#e3e4e5';
   c.fillRect(0, 0, cw, ch);
   // Pontilhado leve de alumínio jateado, para o tampo não parecer plástico liso.
   const speckle = c.getImageData(0, 0, cw, ch);
@@ -292,7 +293,7 @@ export function drawDeck(dark: boolean, W: number, D: number): { map: THREE.Canv
   const u = (kx1 - kx0) / 14.5;
   const gap = u * 0.12;
   const rows: { h: number; keys: number[]; labels: string[] }[] = [
-    { h: 0.6, keys: [1.4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.1], labels: ['esc', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', ''] },
+    { h: 1, keys: [1.5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], labels: ['esc', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', ''] },
     { h: 1, keys: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.5], labels: ['`', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 'delete'] },
     { h: 1, keys: [1.5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], labels: ['tab', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\\'] },
     { h: 1, keys: [1.8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.7], labels: ['caps lock', 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', "'", 'return'] },
@@ -301,7 +302,8 @@ export function drawDeck(dark: boolean, W: number, D: number): { map: THREE.Canv
   ];
   const totalH = rows.reduce((s, r) => s + r.h, 0) * u;
   const pad = u * 0.25;
-  c.fillStyle = dark ? '#1b1c1e' : '#a7a9ad';
+  // Moldura do teclado preta nas duas cores, como no MacBook Pro atual.
+  c.fillStyle = '#0d0d0e';
   c.beginPath();
   c.roundRect(kx0 - pad, ky0 - pad, kx1 - kx0 + pad * 2, totalH + pad * 2, u * 0.3);
   c.fill();
@@ -354,9 +356,25 @@ export function drawDeck(dark: boolean, W: number, D: number): { map: THREE.Canv
       } else if (ri === 5 && (ki === 7 || ki === 9)) {
         key(x, y + kh / 2, kw, kh / 2);
         legend(row.labels[ki], x, y + kh / 2, kw, kh / 2, true);
+      } else if (ri === 0 && ki === row.keys.length - 1) {
+        // Touch ID: tecla lisa e mais brilhante, com o anel do sensor.
+        key(x, y, kw, kh);
+        c.save();
+        c.strokeStyle = 'rgba(150,150,156,0.55)';
+        c.lineWidth = u * 0.025;
+        c.beginPath();
+        c.roundRect(x + gap / 2 + u * 0.05, y + gap / 2 + u * 0.05, kw - gap - u * 0.1, kh - gap - u * 0.1, u * 0.1);
+        c.stroke();
+        c.restore();
+        o.save();
+        o.fillStyle = orm(0.25, 0);
+        o.beginPath();
+        o.roundRect(x + gap / 2, y + gap / 2, kw - gap, kh - gap, u * 0.12);
+        o.fill();
+        o.restore();
       } else {
         key(x, y, kw, kh);
-        legend(row.labels[ki], x, y, kw, kh, ri === 0);
+        legend(row.labels[ki], x, y, kw, kh, false);
       }
       x += kw;
     });
@@ -382,15 +400,16 @@ export function drawDeck(dark: boolean, W: number, D: number): { map: THREE.Canv
   grille(cw * 0.04, cw * 0.125);
   grille(cw * 0.875, cw * 0.96);
 
-  const tw = cw * 0.43;
-  const th = ch * 0.355;
+  // Trackpad do 14": cerca de 14,6 × 9 cm.
+  const tw = cw * 0.46;
+  const th = ch * 0.39;
   const tx = (cw - tw) / 2;
-  const ty = ch * 0.6;
-  c.fillStyle = dark ? '#292a2d' : '#c7c9cc';
+  const ty = ch * 0.565;
+  c.fillStyle = dark ? '#2a282a' : '#dcdddf';
   c.beginPath();
   c.roundRect(tx, ty, tw, th, cw * 0.012);
   c.fill();
-  c.strokeStyle = dark ? '#3a3b3f' : '#b6b8bc';
+  c.strokeStyle = dark ? '#3b393b' : '#c9cacd';
   c.lineWidth = 3;
   c.stroke();
   o.fillStyle = orm(0.22, 0.3);

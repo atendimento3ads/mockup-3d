@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
-import { Engine } from './engine/Engine';
+import { Engine, type Tool } from './engine/Engine';
 import type { ScreenImage } from './engine/textures';
 import { connectBridge } from './mcp/bridge';
 import { loadVideo } from './engine/media';
@@ -26,10 +26,12 @@ import {
   type SceneState,
   type ToneMode,
 } from './state';
-import { addScene, patchScene, removeScene, resizeScene, sceneLength, setSceneKeys } from './scenes';
+import { addScene, moveScene, patchScene, removeScene, resizeScene, sceneLength, setSceneKeys } from './scenes';
 import { Card, ColorRow, Dropdown, Field, Note, Section, Seg, SelectRow, TextRow, ToggleRow } from './ui/controls';
 import { Timeline } from './ui/Timeline';
 import { FocusAreas, type Area } from './ui/FocusAreas';
+import { CanvasTools } from './ui/CanvasTools';
+import { useHistory } from './ui/useHistory';
 
 const EXPORT_SIZES = [
   { value: 1920, label: 'Full HD' },
@@ -81,6 +83,8 @@ function readTheme(): 'light' | 'dark' {
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent);
+const KEYS = { undo: IS_MAC ? '⌘Z' : 'Ctrl+Z', redo: IS_MAC ? '⇧⌘Z' : 'Ctrl+Y', paste: IS_MAC ? '⌘V' : 'Ctrl+V' };
 const signedPct = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%`;
 
 const describe = (img: ScreenImage | null, name: string | null): MediaInfo | null =>
@@ -119,6 +123,13 @@ function DeviceIcon({ kind }: { kind: DeviceKind }) {
           <path d="M2.5 18.5h19l-1.2-2.6H3.7z" {...common} />
         </svg>
       );
+    case 'imac':
+      return (
+        <svg viewBox="0 0 24 24" width="22" height="22">
+          <rect x="2.5" y="3.5" width="19" height="13" rx="1.6" {...common} />
+          <path d="M2.5 13.5h19M10 16.5l-.8 4h5.6l-.8-4" {...common} />
+        </svg>
+      );
     case 'browser':
       return (
         <svg viewBox="0 0 24 24" width="22" height="22">
@@ -145,6 +156,8 @@ export default function App() {
   const [areasPreview, setAreasPreview] = useState<{ url: string; aspect: number } | null>(null);
   const [video, setVideo] = useState<{ progress: number; abort: AbortController } | null>(null);
   const [activeScene, setActiveScene] = useState<string | null>(null);
+  const [tool, setTool] = useState<Tool>('orbit');
+  const toolRef = useRef<Tool>('orbit');
   const engineRef = useRef<Engine | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -168,6 +181,8 @@ export default function App() {
     engineRef.current?.setState(next);
     setState(next);
   }, []);
+
+  const history = useHistory(state, commit);
 
   const addMedia = useCallback((img: ScreenImage, name: string | null) => {
     const id = crypto.randomUUID();
@@ -219,6 +234,10 @@ export default function App() {
     engine.onScene = (id) => setActiveScene(id);
     engine.refreshMedia();
     setActiveScene(engine.currentScene);
+    engine.setTool(toolRef.current);
+    engine.onControlsStart = () => {
+      if (spaceRef.current.held) spaceRef.current.used = true;
+    };
     engine.onFocus = () => flash('Foco ajustado nesse ponto');
     engine.onTime = (t, playing) => timeListeners.current.forEach((fn) => fn(t, playing));
     if (import.meta.env.DEV) (window as unknown as { __engine: Engine }).__engine = engine;
@@ -226,6 +245,9 @@ export default function App() {
   }, [flash]);
 
   useEffect(() => {
+    // Só o estado mais recente vai para o motor: um efeito atrasado de um render antigo (o MCP aplica
+    // mudanças direto no motor, antes do React) desfaria a mudança por alguns instantes.
+    if (state !== stateRef.current) return;
     engineRef.current?.setState(state);
   }, [state]);
 
@@ -323,18 +345,101 @@ export default function App() {
     return () => window.removeEventListener('paste', onPaste);
   }, [loadFile]);
 
+  // Atalhos de teclado, como nos editores de design e de vídeo. As ações chegam por ref (sempre a versão atual).
+  const keyActions = useRef<{
+    undo: () => boolean;
+    redo: () => boolean;
+    chooseTool: (t: Tool) => void;
+    deleteSelected: () => boolean;
+    deselect: () => void;
+    flash: (msg: string) => void;
+    duration: number;
+    fps: number;
+  }>({ undo: () => false, redo: () => false, chooseTool: () => undefined, deleteSelected: () => false, deselect: () => undefined, flash: () => undefined, duration: 6, fps: 30 });
+  const spaceRef = useRef({ held: false, used: false });
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement;
-      if (e.code !== 'Space' || el.closest('input, select, textarea, [role="slider"], button')) return;
-      e.preventDefault();
+    const typing = (el: HTMLElement) => !!el.closest('input, select, textarea, [contenteditable="true"]');
+    const onDown = (e: KeyboardEvent) => {
+      const el = e.target instanceof HTMLElement ? e.target : document.body;
+      const k = keyActions.current;
+      const en = engineRef.current;
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.code === 'KeyZ' || e.code === 'KeyY')) {
+        if (typing(el)) return;
+        e.preventDefault();
+        const redo = e.code === 'KeyY' || e.shiftKey;
+        if (redo ? k.redo() : k.undo()) k.flash(redo ? 'Refeito' : 'Desfeito');
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey || typing(el) || !en) return;
+      switch (e.code) {
+        case 'Space': {
+          // Toque rápido toca ou pausa; segurar e arrastar no canvas usa a mãozinha.
+          if (el.closest('[role="slider"], button')) return;
+          e.preventDefault();
+          const sp = spaceRef.current;
+          if (e.repeat || sp.held) return;
+          sp.held = true;
+          sp.used = false;
+          if (!en.playing) en.setTool('hand');
+          return;
+        }
+        case 'KeyH':
+          k.chooseTool('hand');
+          return;
+        case 'KeyV':
+          k.chooseTool('orbit');
+          return;
+        case 'KeyF':
+          en.frame();
+          return;
+        case 'ArrowLeft':
+        case 'ArrowRight': {
+          if (el.closest('[role="slider"]')) return;
+          e.preventDefault();
+          const dt = (e.shiftKey ? 1 : 1 / k.fps) * (e.code === 'ArrowLeft' ? -1 : 1);
+          en.pause();
+          en.seek(Math.min(Math.max(en.time + dt, 0), k.duration));
+          return;
+        }
+        case 'Home':
+        case 'End':
+          e.preventDefault();
+          en.pause();
+          en.seek(e.code === 'Home' ? 0 : k.duration);
+          return;
+        case 'Delete':
+        case 'Backspace':
+          if (k.deleteSelected()) e.preventDefault();
+          return;
+        case 'Escape':
+          k.deselect();
+          return;
+      }
+    };
+    const releaseSpace = (toggle: boolean) => {
+      const sp = spaceRef.current;
+      if (!sp.held) return;
+      sp.held = false;
       const en = engineRef.current;
       if (!en) return;
-      if (en.playing) en.pause();
-      else en.play();
+      en.setTool(toolRef.current);
+      if (toggle && !sp.used) {
+        if (en.playing) en.pause();
+        else en.play();
+      }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') releaseSpace(true);
+    };
+    const onBlur = () => releaseSpace(false);
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+      window.removeEventListener('blur', onBlur);
+    };
   }, []);
 
   const onDrop = (e: DragEvent) => {
@@ -484,6 +589,30 @@ export default function App() {
   const deleteKey = (id: string) => {
     setAnim({ keyframes: anim.keyframes.filter((k) => k.id !== id) });
     setSelectedKey(null);
+  };
+
+  const chooseTool = (t: Tool) => {
+    toolRef.current = t;
+    setTool(t);
+    engineRef.current?.setTool(t);
+  };
+  const undo = () => history.undo() && (flash('Desfeito'), true);
+  const redo = () => history.redo() && (flash('Refeito'), true);
+
+  keyActions.current = {
+    undo: history.undo,
+    redo: history.redo,
+    chooseTool,
+    deleteSelected: () => {
+      if (!selectedKey) return false;
+      deleteKey(selectedKey);
+      flash('Quadro-chave apagado');
+      return true;
+    },
+    deselect: () => setSelectedKey(null),
+    flash,
+    duration: anim.duration,
+    fps: anim.fps,
   };
 
   // Preset completo: troca câmera, desfoque, ritmo e flutuação de uma vez e já toca.
@@ -668,13 +797,24 @@ export default function App() {
           <Dropdown label="Ajuda" className="ghost">
             {() => (
               <div className="menu-list help">
-                <div className="menu-head">Controles</div>
-                <p><kbd>Arrastar</kbd> gira a câmera</p>
-                <p><kbd>Botão direito</kbd> move o quadro</p>
+                <div className="menu-head">Câmera</div>
+                <p><kbd>V</kbd> arrastar gira a câmera</p>
+                <p><kbd>H</kbd> mãozinha: arrastar move o quadro</p>
+                <p><kbd>Espaço + arrastar</kbd> mãozinha por um instante</p>
+                <p><kbd>Botão direito</kbd> faz o contrário da ferramenta</p>
                 <p><kbd>Scroll</kbd> aproxima e afasta</p>
+                <p><kbd>F</kbd> enquadra o aparelho</p>
                 <p><kbd>Duplo clique</kbd> define o ponto de foco</p>
-                <p><kbd>Espaço</kbd> toca ou pausa a animação</p>
-                <p><kbd>⌘V</kbd> cola um print direto na tela</p>
+                <div className="menu-head">Linha do tempo</div>
+                <p><kbd>Espaço</kbd> toca ou pausa</p>
+                <p><kbd>← →</kbd> anda quadro a quadro (⇧ 1 s)</p>
+                <p><kbd>Home / End</kbd> vai ao início ou ao fim</p>
+                <p><kbd>Delete</kbd> apaga o quadro-chave selecionado</p>
+                <p><kbd>Arrastar uma cena</kbd> muda a ordem das cenas</p>
+                <div className="menu-head">Edição</div>
+                <p><kbd>{KEYS.undo}</kbd> desfaz</p>
+                <p><kbd>{KEYS.redo}</kbd> refaz</p>
+                <p><kbd>{KEYS.paste}</kbd> cola um print direto na tela</p>
               </div>
             )}
           </Dropdown>
@@ -744,6 +884,17 @@ export default function App() {
             <button className="mini-btn accent" onClick={() => fileRef.current?.click()}>Enviar</button>
           </div>
         )}
+        <CanvasTools
+          tool={tool}
+          canUndo={history.canUndo}
+          canRedo={history.canRedo}
+          undoKey={KEYS.undo}
+          redoKey={KEYS.redo}
+          onTool={chooseTool}
+          onUndo={undo}
+          onRedo={redo}
+          onFrame={() => engineRef.current?.frame()}
+        />
         {dragging && <div className="drop-overlay">Solte para colocar na tela</div>}
         {toast && <div className="toast">{toast}</div>}
       </main>
@@ -769,6 +920,18 @@ export default function App() {
         onSelectScene={selectScene}
         onRemoveScene={(id) => setState((s) => removeScene(s, id))}
         onResizeScene={(id, len) => setState((s) => resizeScene(s, id, len))}
+        onMoveScene={(id, to) => {
+          // A agulha acompanha a cena movida, que continua selecionada.
+          const next = moveScene(stateRef.current, id, to);
+          if (next === stateRef.current) return;
+          commit(next);
+          const sc = next.animation.scenes.find((x) => x.id === id);
+          if (sc) {
+            engineRef.current?.pause();
+            engineRef.current?.seek(sc.t);
+          }
+          flash(`Cena movida para a posição ${next.animation.scenes.findIndex((x) => x.id === id) + 1}`);
+        }}
       />
 
       <aside className="inspector">
@@ -826,7 +989,7 @@ export default function App() {
           <Section title="Aparelho" aside={sceneTag}>
             <Card thumb={<DeviceIcon kind={d.kind} />} title={DEVICES.find((x) => x.kind === d.kind)?.label ?? ''} subtitle={finish.label}>
               {(close) => (
-                <div className="pick-grid">
+                <div className="pick-grid devices">
                   {DEVICES.map((dev) => (
                     <button key={dev.kind} className={d.kind === dev.kind ? 'on' : ''} onClick={() => (close(), chooseDevice(dev.kind))}>
                       <DeviceIcon kind={dev.kind} />
@@ -840,7 +1003,15 @@ export default function App() {
               <span className="row-label">Acabamento</span>
               <span className="swatches" role="radiogroup" aria-label="Acabamento">
                 {FINISHES[d.kind].map((f) => (
-                  <button key={f.key} role="radio" aria-checked={d.finish === f.key} title={f.label} className={d.finish === f.key ? 'on' : ''} style={{ background: f.color }} onClick={() => setDevice({ finish: f.key })} />
+                  <button
+                    key={f.key}
+                    role="radio"
+                    aria-checked={d.finish === f.key}
+                    title={f.label}
+                    className={d.finish === f.key ? 'on' : ''}
+                    style={{ background: f.color2 && f.color2 !== f.color ? `linear-gradient(90deg, ${f.color} 50%, ${f.color2} 50%)` : f.color }}
+                    onClick={() => setDevice({ finish: f.key })}
+                  />
                 ))}
               </span>
             </div>
@@ -856,6 +1027,7 @@ export default function App() {
               />
             )}
             {d.kind === 'iphone' && <ToggleRow label="Ilha dinâmica" checked={d.showIsland} onChange={(showIsland) => setDevice({ showIsland })} />}
+            {d.kind !== 'browser' && <ToggleRow label="Logo da Apple" checked={d.logo !== false} onChange={(logo) => setDevice({ logo })} />}
             {d.kind === 'macbook' && <Field label="Tampa" value={d.lidAngle} min={60} max={150} step={1} def={108} onChange={(lidAngle) => setDevice({ lidAngle })} format={deg} />}
             {d.kind === 'browser' && <TextRow label="Endereço" value={d.browserUrl} onChange={(browserUrl) => setDevice({ browserUrl })} />}
             <Field label="Girar" value={d.rotY} min={-180} max={180} step={1} def={0} onChange={(rotY) => setDevice({ rotY })} format={deg} />

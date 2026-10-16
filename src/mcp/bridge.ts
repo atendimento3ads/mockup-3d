@@ -37,16 +37,24 @@ export function connectBridge(getHandlers: () => Handlers): () => void {
     }
   };
 
-  const hello = () => hot.send('mockup:hello', {});
+  const hello = () => {
+    try {
+      hot.send('mockup:hello', {});
+    } catch {
+      // A conexão com o Vite ainda está abrindo: o aviso sai quando ela conectar (vite:ws:connect).
+    }
+  };
   const onVisible = () => {
     if (document.visibilityState === 'visible') hello();
   };
   hot.on('mockup:cmd', onCmd);
+  hot.on('vite:ws:connect', hello);
   hello();
   window.addEventListener('focus', hello);
   document.addEventListener('visibilitychange', onVisible);
   return () => {
     hot.off('mockup:cmd', onCmd);
+    hot.off('vite:ws:connect', hello);
     window.removeEventListener('focus', hello);
     document.removeEventListener('visibilitychange', onVisible);
   };
